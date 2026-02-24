@@ -1,97 +1,184 @@
-# Final Technical Architecture: ClickHouse Analytical Agent
+# Final Architecture v2 — ClickHouse Analytical Agent
 
-## Section 1: Executive Summary
-The ClickHouse Analytical Agent is a production-grade system for generating audited, repeatable analytical reports and interactive insights over ClickHouse for data teams and business stakeholders, built on a deterministic LangGraph state machine with pluggable components and strict security isolation between query execution and sandboxed analysis; this architecture prioritizes predictable execution, durable state, and controlled tool use while enabling swappable infrastructure (LLM providers, vector store, sandbox, and storage) through interface-based design.
+## Part 1: Product Features
 
-## Section 2: Revised Technology Stack
-| Layer | Component | Technology | Rationale |
-|---|---|---|---|
-| Frontend | Chat UI | FastAPI + WebSocket + React | Full control over HITL workflows, streaming, interactive charts |
-| Orchestration | State Machine | LangGraph | DAG execution, persistence, HITL interrupts, durable execution |
-| LLM Gateway | Multi-Provider | LiteLLM | Provider fallback, cost tracking, model routing |
-| Schema Intelligence | Vector Store | Qdrant | Semantic schema search, historical query pairs, few-shot examples |
-| Data Warehouse | Analytical DB | ClickHouse | Columnar storage, high-speed aggregations |
-| Code Sandbox | Ephemeral Execution | E2B | Isolated microVMs for data science code |
-| Observability | Tracing | OpenTelemetry + Grafana | Distributed tracing, metrics, alerting |
-| Storage | State & Artifacts | PostgreSQL + S3 | Conversation history, generated reports, checkpoints |
-| Cache | Query Results | Redis | TTL-based caching of query results and schema metadata |
+### Section 1: Product Vision
+The ClickHouse Analytical Agent is a multi-agent analytical system for data scientists that turns natural language questions into audited, reproducible analytical reports backed by ClickHouse. It is designed to handle real analytical workflows: iterative exploration, anomaly detection, hypothesis testing, and visualization, not just one-shot SQL answers. The system prioritizes deterministic execution, strict security boundaries, and operational observability so that every result can be trusted and traced.
 
-## Section 3: System Architecture Diagram
+The product is built around a feature-first philosophy: define what the system must do, then implement an architecture that delivers those features with clear agent boundaries. The architecture uses LangGraph for deterministic orchestration, ClickHouse for analytical execution, Qdrant for semantic schema retrieval and historical query pairs, and a sandboxed smolagents `CodeAgent` for analysis and visualization. It adopts proven R2-DB2 patterns—registry, middleware, audit, evaluation, observability, recovery, and lifecycle—without requiring the R2-DB2 library itself, following the structure in [`src/r2-db2/core/registry.py`](src/r2-db2/core/registry.py) and related core interfaces.
+
+The system is also production-oriented: it supports multi-tenant isolation, caching, error recovery, and continuous evaluation. It integrates optionally with Open WebUI as a frontend but remains a backend-first system with clean APIs and portable components.
+
+### Section 2: Feature Catalog
+
+#### Data Querying
+| Feature | Description | Priority |
+|---|---|---|
+| Intent-to-SQL Planning | Produce a structured analysis plan with required tables, metrics, and filters before any execution. | P0 |
+| Schema Retrieval | Retrieve relevant schema and column context via Qdrant; fallback to ClickHouse `system.columns` if needed. | P0 |
+| SQL Generation & Validation | Generate read-only SQL, validate against allowlist, enforce limits and safe operations. | P0 |
+| SQL Execution | Execute validated SQL in ClickHouse and materialize results to `.parquet`. | P0 |
+| Multi-Query Expansion | Propose follow-up queries (drill-downs, comparisons, anomaly slices) based on results. | P0 |
+| Cost Estimation | Estimate query cost and surface it during approval. | P1 |
+| Schema Change Detection | Detect schema drift and re-index Qdrant; invalidate caches. | P1 |
+
+#### Analysis & Insights
+| Feature | Description | Priority |
+|---|---|---|
+| Sandboxed Code Execution | Run analysis in an ephemeral sandbox using smolagents `CodeAgent`. | P0 |
+| Statistical Summaries | Compute aggregates, distributions, correlations, and trends. | P0 |
+| Anomaly Detection | Detect outliers and unexpected shifts using programmatic analysis. | P0 |
+| Hypothesis Testing | Support t-tests, chi-square, and regression-style checks. | P1 |
+| Programmatic Tool Calling | CodeAgent can call host tools from within code (e.g., `query_database`) for multi-step analysis without extra LLM tokens. | P0 |
+| Artifact Packaging | Produce charts, tables, and structured insight artifacts. | P0 |
+
+#### Reporting
+| Feature | Description | Priority |
+|---|---|---|
+| Analytical Report Assembly | Combine narrative, charts, and statistical summaries into a full report. | P0 |
+| Output Formats | PDF, interactive Plotly HTML, CSV/Parquet, JSON summary (default: all). | P0 |
+| Partial Results Streaming | Stream intermediate findings to frontend during execution. | P1 |
+| Report Versioning | Store report metadata with schema snapshot and prompt versions. | P1 |
+
+#### Conversation
+| Feature | Description | Priority |
+|---|---|---|
+| Multi-Turn Context | Persist conversation state across turns and sessions. | P0 |
+| Follow-Up Resolution | Allow follow-up questions to reuse previous results and `.parquet` artifacts. | P0 |
+| HITL Approval | Human approval gate before expensive queries or sandbox execution. | P0 |
+
+#### Security
+| Feature | Description | Priority |
+|---|---|---|
+| Credential Isolation | Keep ClickHouse credentials on host; sandbox receives no secrets. | P0 |
+| SQL Injection Prevention | Enforce read-only SQL, table allowlists, and LIMIT guards. | P0 |
+| Sandbox Isolation | Ephemeral sandbox with no network access to internal services. | P0 |
+| Tenant Isolation | Per-tenant access controls and quotas. | P1 |
+
+#### Operations
+| Feature | Description | Priority |
+|---|---|---|
+| Observability | OpenTelemetry traces, metrics, and structured logs. | P0 |
+| Audit Trail | Record all LLM calls, SQL executions, tool calls, and approvals. | P0 |
+| Evaluation Framework | Continuous evaluation of SQL accuracy and report quality. | P0 |
+| Error Recovery | Error taxonomy with retries and escalation paths. | P0 |
+| Caching | Query cache, schema cache, and artifact reuse. | P1 |
+| Multi-Model Routing | LiteLLM routing with fallback providers. | P1 |
+
+---
+
+## Part 2: Architecture
+
+### Section 3: Technology Stack
+| Component | Technology | Rationale |
+|---|---|---|
+| Orchestration | LangGraph | Deterministic DAG, HITL interrupts, checkpointing, streaming. See [docs.langchain.com](https://docs.langchain.com/oss/python/langgraph/thinking-in-langgraph). |
+| LLM Routing | LiteLLM | Unified API, fallback routing, cost tracking. |
+| Schema Retrieval | Qdrant | Semantic retrieval of schemas + historical query pairs. |
+| Data Warehouse | ClickHouse | Columnar analytics with high-performance aggregation. |
+| Sandbox | E2B (via smolagents CodeAgent) | Ephemeral isolated execution for untrusted analysis code. See [huggingface.co](https://huggingface.co/docs/smolagents/en/index). |
+| Code Agent | smolagents `CodeAgent` | Rich Python control flow and tool execution inside sandbox. |
+| Visualization | Plotly | Interactive charts and report artifacts. |
+| State & Metadata | PostgreSQL | LangGraph checkpoints, conversation state, audit, eval results. |
+| Cache | Redis | Query cache and schema cache with TTL. |
+| Observability | OpenTelemetry + Grafana/Tempo | Distributed tracing and metrics. |
+| Frontend | Open WebUI (optional) | Preferred chat UI; backend works independently. |
+
+### Section 4: System Architecture Diagram (Text-Based)
 ```
-User → FastAPI → LangGraph State Machine → [Planner → HITL → Context → SQL Gen → SQL Exec → Analysis → Report]
-                                              ↕           ↕         ↕          ↕
-                                           LiteLLM     Qdrant   ClickHouse    E2B
-                                              ↕
-                                        OpenTelemetry → Grafana
+User / API Client
+   │
+   ▼
+API Gateway / Server (FastAPI)
+   │
+   ▼
+LangGraph Orchestrator
+   │
+   ├─► Context Retrieval (Qdrant + schema cache)
+   │
+   ├─► Plan + HITL Approval
+   │
+   ├─► SQL Generation + Validation
+   │
+   ├─► SQL Execution (ClickHouse) ──► .parquet artifact
+   │
+   ├─► Analysis (Sandbox) — smolagents CodeAgent in E2B
+   │        └─► Programmatic tool calls to host (query_database)
+   │
+   ├─► Report Assembly + Output Packaging
+   │
+   └─► Memory Update + Audit + Observability
+
+External Services:
+  - LiteLLM (model routing)
+  - Qdrant (schema + query pairs)
+  - ClickHouse (analytics)
+  - E2B (sandbox)
+  - Postgres/Redis (state + cache)
+  - OpenTelemetry (traces/metrics)
 ```
 
-## Section 4: LangGraph Execution Graph (Revised)
-**Node 1: Intent Classification**
-- **Input (from state):** `messages`, `conversation_id`, `user_id`
-- **Output (to state):** `intent`
-- **Error handling:** On classification failure, default to `clarification` and append a system message requesting additional context; log and proceed with safe path.
-- **Uses LLM:** Yes (lightweight, low-cost model).
+### Section 5: Agent Roles
+| Agent/Node | Responsibility | Input | Output | Uses LLM | Runs in Sandbox |
+|---|---|---|---|---|---|
+| Intent Classifier | Classify request type (new analysis, follow-up, clarification) | Messages, memory | Intent label | Yes | No |
+| Context Retriever | Retrieve schema + historical query pairs | Intent, user query | Schema context, few-shot pairs | Optional | No |
+| Planner | Produce structured plan and cost estimate | Query + schema context | Analysis plan | Yes | No |
+| HITL Gate | User approval/edits | Plan + cost | Approved plan or rejection | No | No |
+| SQL Generator | Generate SQL from plan | Plan + schema context | SQL + validation errors | Yes | No |
+| SQL Executor | Run SQL, materialize `.parquet` | SQL | QueryResult + artifact path | No | No |
+| CodeAgent (Analysis) | Statistical analysis, charts, anomaly detection | `.parquet`, plan, parameters | Analysis artifacts + insight JSON | Yes | **Yes** |
+| Report Assembler | Narrative + charts + export packaging | Artifacts + plan | Report + output formats | Yes | No |
+| Memory Updater | Persist conversation and query pairs | Messages + outputs | Memory records | No | No |
+| Audit/Observability | Record events + metrics | All node inputs/outputs | Logs + traces | No | No |
 
-**Node 2: Planning**
-- **Input (from state):** `messages`, `intent`, `schema_context` (retrieved), `historical_queries`
-- **Output (to state):** `plan`, `estimated_cost_usd`, `total_llm_tokens`
-- **Error handling:** If structured JSON parse fails, retry once with schema-constrained decoding; on repeat failure route to HITL with a draft plan.
-- **Uses LLM:** Yes (structured output).
+### Section 6: Execution Graph (LangGraph DAG)
+**Nodes**
+1. `intent_classify`
+2. `context_retrieve`
+3. `plan`
+4. `hitl_approval`
+5. `sql_generate`
+6. `sql_execute`
+7. `analysis_sandbox`
+8. `report_assemble`
+9. `memory_update`
+10. `final_response`
 
-**Node 3: Human Approval (HITL)**
-- **Input (from state):** `plan`, `estimated_cost_usd`, `intent`
-- **Output (to state):** `plan_approved` (true/false) and optionally a modified `plan`
-- **Error handling:** If user rejects, terminate with a structured response and store rejection reason in memory; if timeout, suspend via checkpointer and resume on user action.
-- **Uses LLM:** No (UI-driven).
+**Edges**
+- `START → intent_classify → context_retrieve → plan → hitl_approval`
+- If `plan_approved == false`: `hitl_approval → final_response` (rejected)
+- If `plan_approved == true`: `hitl_approval → sql_generate → sql_execute → analysis_sandbox → report_assemble → memory_update → final_response`
 
-**Node 4: SQL Generation**
-- **Input (from state):** `plan`, `schema_context`, `historical_queries`, `messages`
-- **Output (to state):** `generated_sql`, `sql_validation_errors`
-- **Error handling:** Validate SQL; if errors, regenerate with explicit error feedback; increment `sql_retry_count`.
-- **Uses LLM:** Yes (SQL generation + repair).
+**Conditional Routing**
+- If `intent == clarification`: route `intent_classify → hitl_approval` (clarifying questions only).
+- If `sql_execute` fails: route to `sql_generate` with error context (bounded retry).
+- If `analysis_sandbox` fails: retry once, then mark degraded and continue to `report_assemble`.
 
-**Node 5: SQL Execution**
-- **Input (from state):** `generated_sql`, `sql_retry_count`
-- **Output (to state):** `query_results`, `execution_time_ms`
-- **Error handling:** On execution failure, capture error, route back to SQL Generation with error context; max 3 attempts, then surface to HITL.
-- **Uses LLM:** No (execution is deterministic).
+**Multi-Query Expansion Loop**
+- After `analysis_sandbox`, generate `followup_candidates`.
+- If `followup_candidates` present: route to `hitl_approval` with proposed queries.
+- On approval, loop back to `sql_generate` with selected follow-up query + cached context.
+- On rejection, continue to `report_assemble`.
 
-**Node 6: Data Analysis (Sandboxed)**
-- **Input (from state):** `query_results` (path to `.parquet`), `plan`
-- **Output (to state):** `analysis_artifacts`, `sandbox_id`
-- **Error handling:** If sandbox fails or times out, retry once; on failure return partial results and mark artifacts as degraded.
-- **Uses LLM:** Optional (for narrative scaffolding); code execution is deterministic in E2B.
-
-**Node 7: Report Assembly**
-- **Input (from state):** `analysis_artifacts`, `plan`, `messages`
-- **Output (to state):** `report`, `output_format`
-- **Error handling:** If chart rendering fails, fallback to tabular summaries and text; preserve artifacts for download.
-- **Uses LLM:** Yes (summary synthesis and formatting).
-
-**Node 8: Memory Update**
-- **Input (from state):** `messages`, `plan`, `generated_sql`, `query_results`, `report`
-- **Output (to state):** persisted memory records and updated `historical_queries`
-- **Error handling:** Memory write failure should not block response; log and continue.
-- **Uses LLM:** No (store structured records).
-
-## Section 5: State Design
+### Section 7: State Design (TypedDict)
 ```python
+from typing import TypedDict, Literal, Any
+
 class AnalyticalAgentState(TypedDict):
     # Conversation
-    messages: list[BaseMessage]
     conversation_id: str
     user_id: str
+    messages: list[dict[str, Any]]
 
-    # Intent
+    # Intent + Planning
     intent: Literal["new_analysis", "follow_up", "clarification", "off_topic"] | None
-
-    # Planning
-    plan: AnalysisPlan | None  # Structured JSON plan
+    plan: dict[str, Any] | None
     plan_approved: bool
 
-    # Schema Context
-    schema_context: list[SchemaDocument]  # From Qdrant
-    historical_queries: list[QueryPair]  # Similar past queries
+    # Context
+    schema_context: list[dict[str, Any]]
+    historical_queries: list[dict[str, Any]]
 
     # SQL
     generated_sql: str | None
@@ -99,214 +186,158 @@ class AnalyticalAgentState(TypedDict):
     sql_retry_count: int
 
     # Execution
-    query_results: QueryResult | None  # Metadata + path to .parquet
+    query_result: dict[str, Any] | None  # includes parquet_path
     execution_time_ms: int | None
 
     # Analysis
-    analysis_artifacts: list[Artifact]  # Charts, tables, insights
+    analysis_artifacts: list[dict[str, Any]]
     sandbox_id: str | None
 
+    # Multi-query expansion
+    followup_candidates: list[dict[str, Any]]
+    approved_followups: list[dict[str, Any]]
+
     # Output
-    report: Report | None
-    output_format: Literal["interactive", "pdf", "csv", "all"]
+    report: dict[str, Any] | None
+    output_formats: list[Literal["pdf", "plotly_html", "csv", "parquet", "json"]]
 
     # Metadata
     total_llm_tokens: int
     estimated_cost_usd: float
     trace_id: str
 ```
+**Field notes**
+- `schema_context` and `historical_queries` follow the retrieval patterns used in [`src/r2-db2/integrations/qdrant/agent_memory.py`](src/r2-db2/integrations/qdrant/agent_memory.py).
+- `sql_validation_errors` and `sql_retry_count` enable bounded recovery as in [`src/r2-db2/core/recovery/base.py`](src/r2-db2/core/recovery/base.py).
+- `analysis_artifacts` mirror artifact packaging in [`src/r2-db2/integrations/plotly/chart_generator.py`](src/r2-db2/integrations/plotly/chart_generator.py).
+- `trace_id` is required for OpenTelemetry correlation, following [`src/r2-db2/core/observability/base.py`](src/r2-db2/core/observability/base.py).
 
-- **Conversation fields** provide the durable multi-turn context used by planning, generation, and report synthesis while tying the request to a stable `conversation_id` and `user_id` for persistence and audit.
-- **Intent fields** determine routing across the graph (e.g., clarification vs. new analysis) and ensure predictable control flow.
-- **Planning fields** capture the structured plan and its approval status to enforce HITL gating before any execution.
-- **Schema context fields** hold semantically retrieved schema documents and similar historical queries to ground SQL generation and reduce hallucinations.
-- **SQL fields** capture the latest generated SQL, validation errors, and retry budget to implement bounded correction loops.
-- **Execution fields** store the results artifact and timing metadata needed for observability and report generation.
-- **Analysis fields** capture sandbox-produced artifacts and the sandbox session for lifecycle management.
-- **Output fields** store the assembled report and target formats to drive streaming and downloads.
-- **Metadata fields** track per-request cost and observability correlation via `trace_id`.
+### Section 8: CodeAgent & Sandbox Design
+**Purpose**: Provide a secure environment for Python-based analysis (statistics, anomaly detection, Plotly visualization) without exposing database credentials.
 
-## Section 6: Component Interface Design
+**Agent**: smolagents `CodeAgent` runs **only** inside the sandbox. It is not the orchestrator and does not control the LangGraph DAG. The host launches the agent with an explicit tool set and returns structured artifacts.
+
+**Programmatic Tool Calling Pattern**
+- The CodeAgent generates Python code that calls host-side tools via an RPC bridge.
+- Example tools exposed to the sandbox:
+  - `query_database(sql: str) -> DataFrameSummary`
+  - `load_parquet(path: str) -> DataFrame`
+  - `save_artifact(obj, name: str, format: str) -> ArtifactRef`
+  - `emit_metric(name: str, value: float, labels: dict)`
+- This pattern reduces LLM token usage and latency for multi-step workflows because code can loop, branch, and reuse tools without repeated LLM calls.
+
+**Sandbox Security**
+- No credentials in sandbox; all secrets remain on host.
+- Network access restricted to the tool bridge; no direct ClickHouse access.
+- Ephemeral lifecycle: created per run, destroyed on completion.
+- Resource limits: 5–10 min timeout, 2–4 GB RAM, disk quota.
+
+**Artifacts**
+- Charts saved as Plotly HTML and PNG snapshots.
+- Tables saved as CSV/Parquet.
+- Summary JSON emitted with key metrics and findings.
+
+### Section 9: Multi-Query Expansion
+1. The analysis node proposes follow-up queries based on detected anomalies or summary deltas.
+2. The system presents these in the HITL step with estimated cost and expected insight value.
+3. Approved follow-ups are executed via the SQL generation path; rejected ones are logged for context but not executed.
+4. Results are merged into the final report with provenance linking to the follow-up query ID.
+5. The loop is bounded by a max-followup count and budget to avoid runaway execution.
+
+### Section 10: Component Interfaces (Python Protocols)
 ```python
-class LLMProvider(Protocol):
-    async def generate(self, messages, tools, model) -> LLMResponse: ...
-    async def generate_structured(self, messages, schema, model) -> dict: ...
+from typing import Protocol, Any, Iterable
 
-class SchemaStore(Protocol):
-    async def search_schemas(self, query, top_k) -> list[SchemaDocument]: ...
-    async def get_table_schema(self, table_name) -> TableSchema: ...
-    async def index_schema(self, schema) -> None: ...
+class LLMRouter(Protocol):
+    async def generate(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None, model: str) -> dict[str, Any]: ...
+    async def generate_structured(self, messages: list[dict[str, Any]], schema: dict[str, Any], model: str) -> dict[str, Any]: ...
 
 class SQLRunner(Protocol):
-    async def execute(self, sql, params) -> QueryResult: ...
-    async def validate(self, sql) -> list[str]: ...
-    async def explain(self, sql) -> QueryPlan: ...
+    async def validate(self, sql: str) -> list[str]: ...
+    async def explain(self, sql: str) -> dict[str, Any]: ...
+    async def execute(self, sql: str, params: dict[str, Any] | None = None) -> dict[str, Any]: ...
+
+class SchemaStore(Protocol):
+    async def search(self, query: str, top_k: int) -> list[dict[str, Any]]: ...
+    async def get_table(self, table_name: str) -> dict[str, Any]: ...
+    async def index_schema(self, docs: Iterable[dict[str, Any]]) -> None: ...
 
 class CodeSandbox(Protocol):
-    async def create(self, timeout_seconds) -> SandboxSession: ...
-    async def execute_code(self, session, code, files) -> ExecutionResult: ...
-    async def destroy(self, session) -> None: ...
+    async def create(self, timeout_seconds: int, memory_mb: int) -> str: ...
+    async def run_code(self, sandbox_id: str, code: str, files: list[str]) -> dict[str, Any]: ...
+    async def destroy(self, sandbox_id: str) -> None: ...
 
 class ConversationMemory(Protocol):
-    async def get_history(self, conversation_id) -> list[BaseMessage]: ...
-    async def save_turn(self, conversation_id, messages) -> None: ...
-    async def get_similar_queries(self, query, top_k) -> list[QueryPair]: ...
+    async def load_history(self, conversation_id: str) -> list[dict[str, Any]]: ...
+    async def save_turn(self, conversation_id: str, messages: list[dict[str, Any]]) -> None: ...
+    async def get_similar_queries(self, query: str, top_k: int) -> list[dict[str, Any]]: ...
 ```
+These interfaces follow the registry pattern in [`src/r2-db2/core/registry.py`](src/r2-db2/core/registry.py) so that components can be swapped by configuration without code changes.
 
-These interfaces provide a registry-friendly abstraction layer so concrete implementations (e.g., LiteLLM vs. direct provider SDKs, Qdrant vs. a SQL-backed schema index, ClickHouse vs. another analytical backend, or E2B vs. a self-hosted sandbox) can be swapped by configuration without rewriting orchestration logic. The design mirrors the R2-DB2 registry pattern, enabling environment-specific deployments, mock-based testing, and future migrations while keeping the LangGraph node logic stable.
+---
 
-## Section 7: Security Architecture
-### 7.1 Credential Isolation
-ClickHouse credentials, LLM API keys, and Qdrant tokens reside only in the host environment and are never injected into the E2B sandbox. The sandbox receives data exclusively as materialized `.parquet` files produced by the SQL execution node, ensuring untrusted code cannot access live database connections. This enforces a strict data boundary between query execution and analysis.
+## Part 3: Production Concerns
 
-### 7.2 SQL Injection Prevention
-All LLM-generated SQL passes through a validation layer before execution. The validator rejects DDL (CREATE, DROP, ALTER, TRUNCATE) and DML (INSERT, UPDATE, DELETE), enforces read-only SELECT statements only, applies row-limit guards (for example, appending or validating `LIMIT 10000`), and checks every referenced table/schema against a whitelist of allowed objects. Invalid queries are returned to the SQL generation node with explicit error feedback for correction.
+### Section 11: Security Architecture
+- **Credential Isolation**: ClickHouse credentials remain on host. Sandbox never receives secrets.
+- **SQL Injection Prevention**: Validate generated SQL against allowlist and read-only rules; enforce LIMIT guards; disallow DDL/DML.
+- **Sandbox Security**: Ephemeral microVM, no inbound network, constrained filesystem, strict time/memory limits.
+- **Authentication & Authorization**: JWT + RBAC; tenant-based access control for schema and query permissions.
+- **Data Classification**: Tag columns as PII/sensitive; redact or mask unless authorized.
 
-### 7.3 Sandbox Security
-E2B sandboxes run as ephemeral microVMs with no network access to internal infrastructure and no access to credentials or secrets. Each sandbox has a hard timeout of 5 minutes and a 2GB memory limit to constrain resource usage. Sandboxes are destroyed immediately after artifact extraction to eliminate persistence risk.
+### Section 12: Observability & Monitoring
+- **Tracing**: OpenTelemetry spans per node with shared `trace_id`.
+- **Metrics**: LLM tokens, cost, ClickHouse latency, sandbox runtime, HITL wait time.
+- **Structured Logging**: JSON logs with user_id, conversation_id, plan_id, and SQL hash.
+- **Dashboards**: Grafana/Tempo dashboards for latency percentiles and error rates.
 
-### 7.4 User Authentication & Authorization
-Requests are authenticated with JWTs and authorized via role-based access control with roles such as viewer, analyst, and admin. Per-user query quotas are enforced at the API layer to prevent abuse and bound cost. Authorization rules also gate which schemas and tables can be queried per user or role.
+### Section 13: Evaluation Framework
+- **SQL Accuracy**: Golden dataset and evaluators mirroring [`src/r2-db2/core/evaluation/`](src/r2-db2/core/evaluation/).
+- **Report Quality**: LLM-as-judge rubric with human review sampling.
+- **End-to-End Testing**: Run full pipeline per release to detect regressions.
+- **Continuous Eval**: Trigger on schema or prompt changes; store scores with prompt versions.
 
-### 7.5 Data Classification
-ClickHouse columns can be tagged as PII or sensitive, and these tags are enforced in context retrieval and prompt assembly. Sensitive fields are automatically redacted from LLM context and report outputs unless the requesting user has explicit privileges. This prevents leakage of regulated data through prompts, logs, or model outputs.
-
-## Section 8: Observability & Monitoring
-### 8.1 OpenTelemetry Integration
-Every LangGraph node emits OpenTelemetry spans with a shared trace context. The trace structure for an analytical request is:
-```
-trace: analytical_request
-├── span: intent_classification (llm_call)
-├── span: planning (llm_call)
-├── span: human_approval (interrupt)
-├── span: sql_generation (llm_call)
-├── span: sql_execution (clickhouse_query)
-├── span: data_analysis (e2b_sandbox)
-├── span: report_assembly
-└── span: memory_update
-```
-This makes latency and error attribution visible across LLM calls, ClickHouse queries, and sandbox execution.
-
-### 8.2 Key Metrics
-- `agent.request.duration_ms` — End-to-end request time
-- `agent.llm.tokens_used` — Per-call and per-request token usage
-- `agent.llm.cost_usd` — Per-call cost
-- `agent.sql.execution_time_ms` — ClickHouse query time
-- `agent.sql.retry_count` — SQL correction attempts
-- `agent.sandbox.duration_ms` — E2B execution time
-- `agent.hitl.wait_time_ms` — Time waiting for human approval
-
-### 8.3 Alerting Rules
-- SQL retry count > 3 → alert (LLM struggling with schema)
-- Request duration > 120s → alert (potential hang)
-- LLM cost per request > $2 → alert (cost anomaly)
-- Sandbox timeout → alert (code execution issue)
-
-### 8.4 Structured Logging
-All services emit JSON logs that include `trace_id`, `user_id`, and `conversation_id` so that logs can be correlated with traces. Each node logs inputs, outputs, latency, and error details to support auditability and rapid debugging. Logs are forwarded to a centralized aggregator alongside OpenTelemetry traces.
-
-## Section 9: Evaluation Framework
-### 9.1 SQL Accuracy Evaluation
-Generated SQL is compared against a golden dataset of question→SQL pairs. Metrics include exact string match, execution match (same results), and partial match for structurally similar queries. This detects regressions when prompts or models change.
-
-### 9.2 Report Quality Evaluation
-Reports are scored by an LLM-as-judge rubric on relevance, accuracy, completeness, and clarity. Each dimension is rated on a 1–5 scale and aggregated into a composite quality score. Low-scoring reports trigger prompt review or sample-based human review.
-
-### 9.3 End-to-End Evaluation Pipeline
-```
-Golden Dataset → Agent → Generated Output → Evaluators → Score Report
-```
-The pipeline runs batch evaluations and produces a versioned score report tied to prompt and model versions.
-
-### 9.4 Continuous Evaluation
-The evaluation suite runs on every prompt change, model change, or schema change. Scores are tracked over time to identify drift, and thresholds are enforced to block releases that regress beyond tolerance. Results are stored for trend analysis.
-
-### 9.5 User Feedback Loop
-Users can thumbs up/down generated reports. Feedback is added to the evaluation dataset and stored in Qdrant so successful query pairs become few-shot examples for future prompts. Negative feedback drives targeted test cases and prompt fixes.
-
-## Section 10: Error Handling Strategy
-### 10.1 Error Taxonomy
-| Error Type | Example | Strategy | Max Retries |
+### Section 14: Error Handling Strategy
+| Error Type | Example | Handling | Retry Budget |
 |---|---|---|---|
-| Transient | Network timeout, rate limit | Exponential backoff | 3 |
-| LLM-Recoverable | Invalid SQL syntax | Feed error back to LLM | 3 |
-| Schema | Table not found | Re-fetch schema from Qdrant, retry | 1 |
-| Sandbox | Code execution error | Feed error + traceback to LLM | 2 |
-| User-Fixable | Ambiguous request | `interrupt()` asking for clarification | N/A |
-| Fatal | ClickHouse down | Graceful error message, alert ops | 0 |
+| Transient | Network timeouts | Exponential backoff | 3 |
+| LLM-Recoverable | Invalid SQL syntax | Retry with error context | 2 |
+| Schema | Table not found | Re-fetch schema, retry | 1 |
+| Sandbox | Code exception | Retry with traceback | 1 |
+| User-Fixable | Ambiguous request | HITL clarification | N/A |
+| Fatal | ClickHouse down | Fail fast + alert | 0 |
 
-### 10.2 Transient Errors
-Transient failures are retried with exponential backoff to avoid thundering herds. Each retry is logged with the same trace context for visibility. After the final retry, the error is surfaced with a clear message and a request ID.
+### Section 15: Caching Strategy
+- **Query Cache**: SQL hash → result artifact, TTL-based.
+- **Schema Cache**: Qdrant results cached per tenant; invalidated on schema change detection.
+- **Artifact Reuse**: Reuse `.parquet` and analysis artifacts for follow-up queries to avoid re-execution.
 
-### 10.3 LLM-Recoverable Errors
-Invalid SQL syntax or malformed outputs are fed back to the LLM with the exact error message and a corrected schema context. The SQL generation node increments `sql_retry_count` and regenerates within the retry budget. If retries are exhausted, the request is routed to HITL with the failing SQL and error details.
+### Section 16: Output Formats
+Default output includes **PDF + Plotly HTML + CSV/Parquet + JSON summary**. Reports are stored with versioned metadata and linked to the source plan and SQL for auditability.
 
-### 10.4 Schema Errors
-If a table or column is not found, the system re-fetches schema context from Qdrant and optionally from ClickHouse metadata. The SQL generation node retries once with updated schema context. Persistent schema errors result in a user-facing explanation and a request for clarification.
+---
 
-### 10.5 Sandbox Errors
-Sandbox execution errors capture the traceback and the executed code, which are fed back to the LLM to attempt a repair. The sandbox is re-created for each retry to avoid contaminated state. If a second attempt fails, the system returns partial results and marks the analysis as degraded.
+## Part 4: Deployment & Roadmap
 
-### 10.6 User-Fixable Errors
-Ambiguous requests or missing filters trigger a HITL `interrupt()` to ask the user for clarification. The request is paused with durable state so it can resume exactly where it stopped. The clarified input is appended to the conversation and re-enters the planning node.
+### Section 17: Deployment Architecture
+- **Containers**: API server, LangGraph worker, Redis cache, Postgres state, Qdrant, OpenTelemetry collector.
+- **Scaling**: API nodes scale horizontally; worker pool scales by queue depth.
+- **Config**: All secrets via environment or Vault; multi-tenant configs loaded at runtime.
 
-### 10.7 Fatal Errors
-Fatal errors such as ClickHouse outages terminate the pipeline immediately with a structured error response and a request ID. An alert is sent to operations for investigation. No retries are attempted to avoid cascading failures.
-
-## Section 11: Deployment Architecture
-### 11.1 Container Structure
-```
-docker-compose:
-  - api-server (FastAPI + LangGraph)
-  - worker (async task processing)
-  - redis (cache + message broker)
-  - postgres (state + conversations)
-  - qdrant (vector store)
-  - grafana + otel-collector (observability)
-```
-
-### 11.2 Scaling Strategy
-The API server scales horizontally behind a load balancer, while workers scale based on queue depth and task latency. ClickHouse and Qdrant run as external managed services to decouple core scaling from infrastructure ops. Redis and Postgres are deployed in highly available configurations.
-
-### 11.3 Environment Configuration
-All secrets are injected via environment variables or Vault, never hardcoded in code or images. Per-environment configuration (dev/staging/prod) is stored in config files with explicit overrides for endpoints, quotas, and model routing. Configuration changes are versioned and auditable.
-
-## Section 12: Implementation Roadmap
-### 12.1 Phase Summary
+### Section 18: Implementation Roadmap
 | Phase | Duration | Deliverables |
 |---|---|---|
-| Phase 1: Foundation | 3 weeks | LangGraph core graph, ClickHouse integration, FastAPI endpoint, LiteLLM setup |
-| Phase 2: Intelligence | 2 weeks | Qdrant schema indexing, few-shot retrieval, conversation memory, multi-turn context |
-| Phase 3: Analysis | 2 weeks | E2B sandbox integration, analysis node, Plotly chart generation, report assembly |
-| Phase 4: Production | 2 weeks | HITL approval flow, OpenTelemetry tracing, error recovery, evaluation framework |
-| Phase 5: Polish | 1 week | React frontend, streaming output, PDF/CSV export, cost tracking, documentation |
+| Phase 1: Foundation | 3 weeks | LangGraph DAG, ClickHouse SQL runner, LiteLLM routing, basic API. |
+| Phase 2: Context & Memory | 2 weeks | Qdrant schema indexing, conversation memory, few-shot retrieval. |
+| Phase 3: Analysis | 2 weeks | E2B sandbox + smolagents CodeAgent, Plotly artifacts. |
+| Phase 4: Production | 2 weeks | Observability, audit, error recovery, evaluation framework. |
+| Phase 5: UX & Outputs | 1 week | Output packaging, streaming updates, Open WebUI integration. |
 
-### 12.2 Phase 1: Foundation
-- LangGraph graph with intent → plan → SQL gen → SQL exec nodes
-- ClickHouse SQL runner integration and `.parquet` materialization
-- FastAPI endpoint with request/response schema
-- LiteLLM configuration with base model routing
+### Section 19: Open WebUI Integration
+Open WebUI integrates through an OpenAI-compatible API facade. It provides chat UX, conversation history, and multi-model routing, but the backend remains independent. If Open WebUI is not deployed, the system still supports HTTP API clients and custom frontends with identical capability.
 
-### 12.3 Phase 2: Intelligence
-- Qdrant schema indexing and retrieval pipeline
-- Few-shot query retrieval based on historical pairs
-- Conversation memory store with retrieval hooks
-- Multi-turn context injection into planning and SQL generation
+---
 
-### 12.4 Phase 3: Analysis
-- E2B sandbox integration with timeout and memory limits
-- Data analysis node producing charts and tables
-- Plotly chart generation and artifact packaging
-- Report assembly pipeline for narrative + visuals
-
-### 12.5 Phase 4: Production
-- HITL approval flow with durable checkpointer
-- OpenTelemetry tracing and metrics emission
-- Unified error recovery taxonomy and routing
-- Evaluation framework with golden dataset and reports
-
-### 12.6 Phase 5: Polish
-- React frontend with progress and artifact display
-- Streaming output and partial result updates
-- PDF/CSV export and download management
-- Cost tracking, audit trail, and documentation
+## References
+- LangGraph design guidance: [docs.langchain.com](https://docs.langchain.com/oss/python/langgraph/thinking-in-langgraph)
+- smolagents CodeAgent + sandboxing: [huggingface.co](https://huggingface.co/docs/smolagents/en/index)
