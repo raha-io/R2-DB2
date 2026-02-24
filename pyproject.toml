@@ -11,6 +11,7 @@ requires-python = ">=3.13.9"
 
 dependencies = [
     "pydantic>=2.12.5",
+    "pydantic-settings>=2.13.1",
     "click>=8.3.1",
     "pandas",
     "httpx",
@@ -21,9 +22,14 @@ dependencies = [
     "sqlalchemy",
     "requests",
     "langchain>=1.2.10",
+    "langchain-core>=1.2.15",
+    "langchain-openai>=1.1.10",
     "langgraph>=1.0.9",
     "langgraph-checkpoint-postgres>=3.0.4",
     "langgraph-checkpoint-redis>=0.3.5",
+    "psycopg[binary]>=3.3.3",
+    "clickhouse-connect>=0.11",
+    "faker>=20.0",
     "smolagents[openai,toolkit,mcp,blaxel,e2b,docker]>=1.24.0",
     "langfuse>=3.14.5",
 ]

@@ -1,0 +1,125 @@
+version: "3.9"
+
+services:
+  # ── Application ──
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${SERVER__PORT:-8000}:8000"
+    env_file:
+      - .env
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./artifacts:/app/artifacts
+    restart: unless-stopped
+    networks:
+      - r2-db2-net
+
+  # ── ClickHouse ──
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.10.2.65
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - r2-db2-net
+
+  # ── ClickHouse Init (one-shot seeder) ──
+  clickhouse-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["/app/.venv/bin/python", "-c", "from r2-db2.integrations.clickhouse.seed import seed_clickhouse_sync; from r2-db2.config.settings import get_settings; seed_clickhouse_sync(get_settings().clickhouse)"]
+    env_file:
+      - .env
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - r2-db2-net
+
+  # ── PostgreSQL (LangGraph checkpointer) ──
+  postgres:
+    image: postgres:18.1
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: r2_db2_checkpoints
+      POSTGRES_USER: r2-db2
+      POSTGRES_PASSWORD: r2_db2_secret
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U r2-db2 -d r2_db2_checkpoints"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - r2-db2-net
+
+  # ── Redis (caching) ──
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - r2-db2-net
+
+  # ── Qdrant (semantic search) ──
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    restart: unless-stopped
+    networks:
+      - r2-db2-net
+
+volumes:
+  clickhouse-data:
+  clickhouse-logs:
+  postgres-data:
+  redis-data:
+  qdrant-data:
+
+networks:
+  r2-db2-net:
+    driver: bridge
