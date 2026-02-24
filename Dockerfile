@@ -1,19 +1,19 @@
 # ── Stage 1: Build ──
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
 WORKDIR /app
 
 # Install dependencies first (cache layer)
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev
+RUN uv sync --frozen --no-install-project --no-dev --extra fastapi
 
 # Copy source and install project
 COPY src/ src/
 COPY AGENTS.md README.md* ./
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra fastapi
 
 # ── Stage 2: Runtime ──
-FROM python:3.12-slim-bookworm AS runtime
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS runtime
 
 WORKDIR /app
 

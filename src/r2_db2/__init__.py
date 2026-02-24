@@ -83,7 +83,7 @@ from .core import (
 )
 
 # Import basic implementations
-from .integrations import MemoryConversationStore, MockLlmService
+from .integrations import MemoryConversationStore
 
 # Server implementations
 from .servers.fastapi import R2-DB2FastAPIServer
@@ -157,7 +157,6 @@ __all__ = [
     "EvaluationDataset",
     # Basic implementations
     "MemoryConversationStore",
-    "MockLlmService",
     # Server components
     "R2-DB2FastAPIServer",
     "ChatHandler",
