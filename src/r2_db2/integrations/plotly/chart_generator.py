@@ -1,15 +1,38 @@
 """Plotly-based chart generator with automatic chart type selection."""
 
-from typing import Dict, Any, List, cast
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, cast
+
 import json
 import pandas as pd
-import plotly.graph_objects as go
-import plotly.express as px
-import plotly.io as pio
+
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    import plotly.io as pio
+    _PLOTLY_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover - handled at runtime
+    px = None  # type: ignore[assignment]
+    go = None  # type: ignore[assignment]
+    pio = None  # type: ignore[assignment]
+    _PLOTLY_IMPORT_ERROR = exc
+
+if TYPE_CHECKING:
+    from plotly.graph_objects import Figure
 
 
 class PlotlyChartGenerator:
     """Generate Plotly charts using heuristics based on DataFrame characteristics."""
+
+    def _ensure_plotly(self) -> None:
+        """Ensure Plotly is available before chart operations."""
+        if _PLOTLY_IMPORT_ERROR is not None:
+            raise ImportError(
+                "Plotly is required for chart generation. "
+                "Install it with 'uv add plotly'."
+            ) from _PLOTLY_IMPORT_ERROR
 
     # R2-DB2 brand colors from landing page
     THEME_COLORS = {
@@ -101,6 +124,206 @@ class PlotlyChartGenerator:
         # Convert to JSON-serializable dict using plotly's JSON encoder
         result = json.loads(pio.to_json(fig))
         return result
+
+    def generate_figure(
+        self,
+        df: pd.DataFrame,
+        title: str = "Chart",
+        chart_type: str | None = None,
+    ) -> "Figure":
+        """Generate a Plotly Figure object based on DataFrame shape and types.
+
+        This method returns the raw go.Figure object instead of a dictionary,
+        which is needed for saving to HTML files or generating static images.
+
+        Args:
+            df: DataFrame to visualize
+            title: Title for the chart
+            chart_type: Optional chart type override. If not specified, auto-detect
+                using the same heuristics as generate_chart().
+
+        Returns:
+            Plotly Figure object
+
+        Raises:
+            ValueError: If DataFrame is empty or cannot be visualized
+        """
+        if df.empty:
+            raise ValueError("Cannot visualize empty DataFrame")
+
+        # If chart_type is specified, create that specific chart type
+        if chart_type is not None:
+            return self._create_chart_by_type(df, chart_type, title)
+
+        # Heuristic: If 4 or more columns, render as a table
+        if len(df.columns) >= 4:
+            return self._create_table(df, title)
+
+        # Identify column types
+        numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+        categorical_cols = df.select_dtypes(
+            include=["object", "category"]
+        ).columns.tolist()
+        datetime_cols = df.select_dtypes(include=["datetime64"]).columns.tolist()
+
+        # Check for time series
+        is_timeseries = len(datetime_cols) > 0
+
+        # Apply heuristics
+        if is_timeseries and len(numeric_cols) > 0:
+            # Time series line chart
+            return self._create_time_series_chart(
+                df, datetime_cols[0], numeric_cols, title
+            )
+        elif len(numeric_cols) == 1 and len(categorical_cols) == 0:
+            # Single numeric column: histogram
+            return self._create_histogram(df, numeric_cols[0], title)
+        elif len(numeric_cols) == 1 and len(categorical_cols) == 1:
+            # One categorical, one numeric: bar chart
+            return self._create_bar_chart(
+                df, categorical_cols[0], numeric_cols[0], title
+            )
+        elif len(numeric_cols) == 2:
+            # Two numeric columns: scatter plot
+            return self._create_scatter_plot(df, numeric_cols[0], numeric_cols[1], title)
+        elif len(numeric_cols) >= 3:
+            # Multiple numeric columns: correlation heatmap
+            return self._create_correlation_heatmap(df, numeric_cols, title)
+        elif len(categorical_cols) >= 2:
+            # Multiple categorical: grouped bar chart
+            return self._create_grouped_bar_chart(df, categorical_cols, title)
+        else:
+            # Fallback: show first two columns as scatter/bar
+            if len(df.columns) >= 2:
+                return self._create_generic_chart(
+                    df, df.columns[0], df.columns[1], title
+                )
+            else:
+                raise ValueError(
+                    "Cannot determine appropriate visualization for this DataFrame"
+                )
+
+    def _create_chart_by_type(
+        self, df: pd.DataFrame, chart_type: str, title: str
+    ) -> "Figure":
+        """Create a specific chart type based on the chart_type parameter.
+
+        Args:
+            df: DataFrame to visualize
+            chart_type: Type of chart to create (bar, scatter, histogram, line, table, heatmap)
+            title: Title for the chart
+
+        Returns:
+            Plotly Figure object
+        """
+        chart_type_lower = chart_type.lower()
+
+        # Identify column types
+        numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+        categorical_cols = df.select_dtypes(
+            include=["object", "category"]
+        ).columns.tolist()
+        datetime_cols = df.select_dtypes(include=["datetime64"]).columns.tolist()
+
+        if chart_type_lower == "table":
+            return self._create_table(df, title)
+        elif chart_type_lower == "histogram":
+            if numeric_cols:
+                return self._create_histogram(df, numeric_cols[0], title)
+            raise ValueError("Histogram requires at least one numeric column")
+        elif chart_type_lower == "bar":
+            if categorical_cols and numeric_cols:
+                return self._create_bar_chart(
+                    df, categorical_cols[0], numeric_cols[0], title
+                )
+            raise ValueError(
+                "Bar chart requires at least one categorical and one numeric column"
+            )
+        elif chart_type_lower == "scatter":
+            if len(numeric_cols) >= 2:
+                return self._create_scatter_plot(
+                    df, numeric_cols[0], numeric_cols[1], title
+                )
+            raise ValueError("Scatter plot requires at least two numeric columns")
+        elif chart_type_lower == "line":
+            if datetime_cols and numeric_cols:
+                return self._create_time_series_chart(
+                    df, datetime_cols[0], numeric_cols, title
+                )
+            raise ValueError(
+                "Line chart requires at least one datetime and one numeric column"
+            )
+        elif chart_type_lower == "heatmap":
+            if numeric_cols:
+                return self._create_correlation_heatmap(df, numeric_cols, title)
+            raise ValueError("Heatmap requires at least one numeric column")
+        else:
+            raise ValueError(f"Unknown chart type: {chart_type}")
+
+    def save_html(
+        self,
+        fig: "Figure",
+        path: str | Path,
+        include_plotlyjs: bool = True,
+    ) -> str:
+        """Save a Plotly figure as a standalone interactive HTML file.
+
+        Args:
+            fig: Plotly Figure object to save
+            path: File path to save the HTML file
+            include_plotlyjs: If True, embed the Plotly.js bundle (~3MB) for offline use.
+                If False, the HTML will load Plotly.js from a CDN.
+
+        Returns:
+            Absolute path to the saved HTML file as a string
+        """
+        path = Path(path)
+        # Create parent directories if they don't exist
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Save the figure as HTML
+        pio.write_html(
+            fig,
+            file=str(path),
+            include_plotlyjs=include_plotlyjs,
+            auto_play=False,
+            full_html=True,
+        )
+
+        return str(path.absolute())
+
+    def save_image(
+        self,
+        fig: "Figure",
+        path: str | Path,
+        format: str = "png",
+        width: int = 1200,
+        height: int = 800,
+    ) -> str | None:
+        """Save a Plotly figure as a static image using kaleido.
+
+        Args:
+            fig: Plotly Figure object to save
+            path: File path to save the image
+            format: Image format (png, jpg, svg, pdf)
+            width: Image width in pixels
+            height: Image height in pixels
+
+        Returns:
+            Absolute path to the saved image file as a string, or None if kaleido
+            is not available.
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            fig.write_image(str(path), format=format, width=width, height=height)
+        except Exception as exc:
+            if "kaleido" in str(exc).lower():
+                return None
+            raise
+
+        return str(path.absolute())
 
     def _apply_standard_layout(self, fig: go.Figure) -> go.Figure:
         """Apply consistent R2-DB2 brand styling to all charts.

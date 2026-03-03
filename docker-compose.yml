@@ -112,12 +112,23 @@ services:
     networks:
       - r2-db2-net
 
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main-slim
+    ports:
+      - "3000:8080"
+    volumes:
+      - open-webui:/app/backend/data
+    networks:
+      - r2-db2-net
+    restart: unless-stopped
+
 volumes:
   clickhouse-data:
   clickhouse-logs:
   postgres-data:
   redis-data:
   qdrant-data:
+  open-webui:
 
 networks:
   r2-db2-net:

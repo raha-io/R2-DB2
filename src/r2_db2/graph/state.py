@@ -42,8 +42,12 @@ class AnalyticalAgentState(TypedDict, total=False):
     analysis_summary: str | None
     analysis_artifacts: Annotated[list[dict[str, Any]], operator.add]
 
-    # Report
+    # Report output
+    output_formats: list[str]
+    output_files: list[dict[str, str]]
     report: dict[str, Any] | None
+    plotly_figures: list[dict[str, Any]]
+    report_output: dict[str, Any] | None
 
     # Observability
     total_llm_tokens: int

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 router = APIRouter()
@@ -161,3 +163,73 @@ async def get_thread_state(thread_id: str, req: Request) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to get thread state: %s", exc)
         raise HTTPException(status_code=404, detail=f"Thread not found: {thread_id}")
+
+
+@router.get("/reports/{report_id}")
+async def list_report_artifacts(report_id: str) -> dict[str, Any]:
+    """List all artifacts for a report."""
+    from r2-db2.config.settings import Settings
+
+    settings = Settings()
+    base_dir = Path(getattr(settings.report, "output_dir", "./reports"))
+
+    report_dir = base_dir / report_id
+    if not report_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Report not found: {report_id}")
+
+    artifacts = []
+    for f in report_dir.iterdir():
+        if f.is_file():
+            artifacts.append(
+                {
+                    "filename": f.name,
+                    "size_bytes": f.stat().st_size,
+                    "download_url": f"/api/v1/reports/{report_id}/{f.name}",
+                }
+            )
+
+    return {"report_id": report_id, "artifacts": artifacts}
+
+
+@router.get("/reports/{report_id}/{filename}")
+async def download_report_artifact(
+    report_id: str,
+    filename: str,
+) -> FileResponse:
+    """Download a generated report artifact file."""
+    from r2-db2.config.settings import Settings
+
+    settings = Settings()
+    base_dir = Path(getattr(settings.report, "output_dir", "./reports"))
+
+    file_path = base_dir / report_id / filename
+
+    # Security: ensure the resolved path is within the reports directory
+    try:
+        file_path = file_path.resolve()
+        base_dir_resolved = base_dir.resolve()
+        if not str(file_path).startswith(str(base_dir_resolved)):
+            raise HTTPException(status_code=403, detail="Access denied")
+    except Exception:
+        raise HTTPException(status_code=403, detail="Invalid path")
+
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404, detail=f"Report artifact not found: {filename}"
+        )
+
+    # Determine media type from extension
+    media_types = {
+        ".json": "application/json",
+        ".csv": "text/csv",
+        ".parquet": "application/octet-stream",
+        ".html": "text/html",
+        ".pdf": "application/pdf",
+    }
+    media_type = media_types.get(file_path.suffix, "application/octet-stream")
+
+    return FileResponse(
+        path=str(file_path),
+        filename=filename,
+        media_type=media_type,
+    )

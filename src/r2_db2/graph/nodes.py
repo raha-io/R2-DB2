@@ -13,8 +13,10 @@ from langchain_openai import ChatOpenAI
 from langgraph.types import interrupt
 
 from r2-db2.config.settings import get_settings
+from r2-db2.core.report import OutputFormat, ReportOutputService
 from r2-db2.graph.state import AnalyticalAgentState
 from r2-db2.integrations.clickhouse.schema_catalog import get_schema_context
+from r2-db2.integrations.plotly.chart_generator import PlotlyChartGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -321,6 +323,19 @@ def analysis_sandbox(state: AnalyticalAgentState) -> dict[str, Any]:
             "recommendations": [],
         }
 
+    plotly_figures: list[dict[str, Any]] = []
+    if rows:
+        try:
+            import pandas as pd
+
+            df = pd.DataFrame(rows)
+            if not df.empty:
+                generator = PlotlyChartGenerator()
+                chart_title = analysis.get("summary", "Analysis Chart") or "Analysis Chart"
+                plotly_figures.append(generator.generate_chart(df, chart_title))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Plotly chart generation failed: %s", exc)
+
     return {
         "analysis_summary": analysis.get("summary", ""),
         "analysis_artifacts": [
@@ -329,13 +344,15 @@ def analysis_sandbox(state: AnalyticalAgentState) -> dict[str, Any]:
                 "content": analysis,
             }
         ],
+        "plotly_figures": plotly_figures,
     }
 
 
-def report_assemble(state: AnalyticalAgentState) -> dict[str, Any]:
+async def report_assemble(state: AnalyticalAgentState) -> dict[str, Any]:
     """Assemble the final report from all artifacts."""
+    report_id = str(uuid.uuid4())
     report = {
-        "id": str(uuid.uuid4()),
+        "id": report_id,
         "conversation_id": state.get("conversation_id", ""),
         "question": state.get("messages", [{}])[-1].get("content", "")
         if state.get("messages")
@@ -352,8 +369,41 @@ def report_assemble(state: AnalyticalAgentState) -> dict[str, Any]:
         },
     }
 
-    logger.info("Report assembled: %s", report["id"])
-    return {"report": report}
+    settings = get_settings()
+    output_dir = settings.report.output_dir if settings.report else "./reports"
+    service = ReportOutputService(base_output_dir=output_dir)
+    output_format_names = settings.report.default_formats if settings.report else []
+    output_formats: list[OutputFormat] = []
+    for fmt in output_format_names:
+        try:
+            output_formats.append(OutputFormat(fmt))
+        except ValueError:
+            logger.warning("Unsupported output format: %s", fmt)
+
+    if not output_formats:
+        output_formats = list(OutputFormat)
+
+    report_output_dict = None
+    try:
+        report_output = await service.generate_report(
+            report_id=report_id,
+            query_result=state.get("query_result"),
+            analysis_text=state.get("analysis_summary", "") or "",
+            plotly_figures=state.get("plotly_figures", []),
+            output_formats=output_formats,
+            metadata={
+                "query": state.get("generated_sql", ""),
+                "conversation_id": state.get("conversation_id", ""),
+            },
+        )
+        report_output_dict = report_output.to_dict()
+        report["report_output"] = report_output_dict
+        report["artifacts"].extend(report_output_dict.get("artifacts", []))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Report output generation failed: %s", exc)
+
+    logger.info("Report assembled: %s", report_id)
+    return {"report": report, "report_output": report_output_dict}
 
 
 def final_response(state: AnalyticalAgentState) -> dict[str, Any]:

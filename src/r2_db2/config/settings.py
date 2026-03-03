@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -75,6 +75,17 @@ class GraphSettings(BaseSettings):
     max_sql_retries: int = 3
 
 
+class ReportSettings(BaseModel):
+    """Configuration for report output."""
+    output_dir: str = "reports"
+    default_formats: list[str] = ["pdf", "plotly_html", "csv", "json"]
+    pdf_page_size: str = "A4"
+    pdf_margin: str = "20mm"
+    include_chart_in_pdf: bool = True
+    max_chart_width: int = 1200
+    max_chart_height: int = 800
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_nested_delimiter="__",
@@ -95,6 +106,7 @@ class Settings(BaseSettings):
     server: ServerSettings = Field(default_factory=ServerSettings)
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     graph: GraphSettings = Field(default_factory=GraphSettings)
+    report: ReportSettings = Field(default_factory=ReportSettings)
 
 
 @lru_cache
