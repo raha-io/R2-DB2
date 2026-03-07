@@ -44,11 +44,11 @@ r2-db2 = "r2-db2.servers.cli.server_runner:main"
 
 [project.optional-dependencies]
 
-fastapi = ["fastapi>=0.68.0", "uvicorn>=0.15.0"]
+fastapi = ["fastapi>=0.135.1", "uvicorn>=0.41.0"]
 
 postgres = ["psycopg2-binary", "db-dtypes", "langchain-postgres>=0.0.12"]
-redis = ["redis>=5.0.0"]
-qdrant = ["qdrant-client>=1.0.0"]
+redis = ["redis"]
+qdrant = ["qdrant-client>=1.17.0"]
 clickhouse = ["clickhouse_connect"]
 report = [
     "pyarrow>=15.0",
@@ -85,7 +85,7 @@ filterwarnings = [
 
 [tool.ruff]
 # Set the target Python version
-target-version = "py311"
+target-version = "py313"
 
 # Set line length to 88 (Black's default)
 line-length = 88
@@ -104,6 +104,12 @@ exclude = [
     "dist",
     "*.egg-info",
 ]
+
+[[tool.uv.index]]
+name = "private"
+url = "https://pypi.org/simple"
+default = true
+
 
 [tool.ruff.lint]
 # Enable specific rule categories

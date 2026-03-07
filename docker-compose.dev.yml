@@ -1,3 +1,19 @@
+# Dev compose for Cisco VPN / systemd-resolved environments.
+# Uses network_mode: host so all containers share the host network stack,
+# giving access to /etc/hosts entries (pypi.org, chat-ai.example.com)
+# and the 127.0.0.53 stub resolver.
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.dev.yml up -d --no-deps --no-build openwebui
+#
+# Services bind directly to host ports (no port mapping needed):
+#   app         → :8000
+#   clickhouse  → :8123, :9000
+#   postgres    → :5432
+#   redis       → :6379
+#   qdrant      → :6333, :6334
+#   openwebui   → :8080  (http://localhost:8080)
 
 services:
   # ── Application ──
@@ -5,10 +21,21 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
+      args:
+        PUBLIC_IMAGE_REGISTRY: ${PUBLIC_IMAGE_REGISTRY}
+        LOCAL_ARTIFACTORY_ADDRESS: ${LOCAL_ARTIFACTORY_ADDRESS}
+        PIP_REPO_URL: ${PIP_REPO_URL}
     ports:
-      - "${SERVER__PORT:-8000}:8000"
+      - "8000:8000"
     env_file:
       - .env
+    environment:
+      # With bridge networking, use service names
+      CLICKHOUSE__HOST: clickhouse
+      POSTGRES__HOST: postgres
+      REDIS__HOST: redis
+      QDRANT__HOST: qdrant
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -26,10 +53,7 @@ services:
 
   # ── ClickHouse ──
   clickhouse:
-    image: clickhouse/clickhouse-server:25.10.2.65
-    ports:
-      - "8123:8123"
-      - "9000:9000"
+    image: clickhouse/clickhouse-server:26.2
     environment:
       CLICKHOUSE_DB: analytics
       CLICKHOUSE_USER: default
@@ -39,11 +63,11 @@ services:
       - clickhouse-data:/var/lib/clickhouse
       - clickhouse-logs:/var/log/clickhouse-server
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      test: ["CMD", "clickhouse-client", "--host", "127.0.0.1", "--query", "SELECT 1"]
       interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     restart: unless-stopped
     networks:
       - r2-db2-net
@@ -53,9 +77,17 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
+      args:
+        PUBLIC_IMAGE_REGISTRY: ${PUBLIC_IMAGE_REGISTRY}
+        LOCAL_ARTIFACTORY_ADDRESS: ${LOCAL_ARTIFACTORY_ADDRESS}
+        PIP_REPO_URL: ${PIP_REPO_URL}
     command: ["python", "-c", "from r2-db2.integrations.clickhouse.seed import seed_clickhouse_sync; from r2-db2.config.settings import get_settings; seed_clickhouse_sync(get_settings().clickhouse)"]
     env_file:
       - .env
+    environment:
+      # With bridge networking, use service name
+      CLICKHOUSE__HOST: clickhouse
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -66,8 +98,6 @@ services:
   # ── PostgreSQL (LangGraph checkpointer) ──
   postgres:
     image: postgres:18.1
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_DB: r2_db2_checkpoints
       POSTGRES_USER: r2-db2
@@ -87,8 +117,6 @@ services:
   # ── Redis (caching) ──
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -103,17 +131,21 @@ services:
   # ── Qdrant (semantic search) ──
   qdrant:
     image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
-      - "6334:6334"
     volumes:
       - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/localhost/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
     networks:
       - r2-db2-net
 
+  # ── Open WebUI ──
   openwebui:
-    image: ghcr.io/open-webui/open-webui:main-slim
+    image: ghcr.io/open-webui/open-webui:v0.8.5
     ports:
       - "3000:8080"
     volumes:
@@ -121,6 +153,16 @@ services:
     networks:
       - r2-db2-net
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+networks:
+  r2-db2-net:
+    driver: bridge
 
 volumes:
   clickhouse-data:
@@ -129,7 +171,3 @@ volumes:
   redis-data:
   qdrant-data:
   open-webui:
-
-networks:
-  r2-db2-net:
-    driver: bridge

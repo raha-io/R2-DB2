@@ -1,6 +1,14 @@
+# Agent Rules Standard (AGENTS.md)
 # ClickHouse Analytical Agent (R2-DB2-based)
 
-Token-efficient guide for architecture, code, and operations. Keep this file aligned with [`docs/final-architecture.md`](docs/final-architecture.md:1). If tech, roadmap, or architecture changes, update both this file and the architecture doc.
+Token-efficient guide for architecture, code, and operations.
+
+Keep this file aligned with [`docs/final-architecture.md`](docs/final-architecture.md:1). If tech, roadmap, or architecture changes, update both this file and the architecture doc.
+
+## AGENTS.md Scope & Inheritance
+- This root file applies to the entire repository unless a deeper `AGENTS.md` exists in a subdirectory.
+- Deeper `AGENTS.md` files narrow or extend instructions for that subtree only.
+- When conflicts occur, use the most specific (deepest) `AGENTS.md` that applies to the file being edited.
 
 ## Project Summary
 Multi-agent analytical system that turns natural language questions into audited, reproducible reports backed by ClickHouse. Deterministic orchestration (LangGraph), strict host/sandbox isolation, and audited execution.
@@ -11,6 +19,13 @@ Multi-agent analytical system that turns natural language questions into audited
 - [`src/r2-db2/integrations/`](src/r2-db2/integrations/): concrete backends (clickhouse, qdrant, local, plotly, postgres).
 - [`src/r2-db2/servers/`](src/r2-db2/servers/): FastAPI/CLI adapters + chat handler.
 - [`docs/`](docs/): primary architecture: [`docs/final-architecture.md`](docs/final-architecture.md:1).
+
+## Working Norms
+- Keep changes minimal, local, and reversible.
+- Preserve clean separation between interfaces (`capabilities`) and implementations (`integrations`).
+- Prefer protocol-driven design and dependency inversion over concrete coupling.
+- Keep orchestration deterministic; avoid hidden side effects across workflow nodes.
+- Update docs and tests whenever behavior or contracts change.
 
 ## Skills (Project)
 - architecture-patterns: backend architecture patterns and separation of concerns.
@@ -113,3 +128,10 @@ class SQLRunner(Protocol):
 ## Contribution Guidance
 - Keep this file and [`docs/final-architecture.md`](docs/final-architecture.md:1) in sync.
 - Update docs whenever node contracts, state schema, tech stack, or roadmap changes.
+
+## Subfolder Agent Guides
+- [`docs/AGENTS.md`](docs/AGENTS.md): Documentation authoring and architecture-doc sync rules.
+- [`src/AGENTS.md`](src/AGENTS.md): Source-wide implementation and quality guardrails.
+- [`src/r2-db2/AGENTS.md`](src/r2-db2/AGENTS.md): Runtime architecture boundaries and module-level conventions.
+- [`tests/AGENTS.md`](tests/AGENTS.md): Test style and coverage expectations.
+- [`scripts/AGENTS.md`](scripts/AGENTS.md): Script safety and reproducibility rules.
