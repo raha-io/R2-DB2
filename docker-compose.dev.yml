@@ -159,6 +159,22 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    environment:
+      # Disable Ollama (we don't use it)
+      - ENABLE_OLLAMA_API=false
+      # OpenRouter as default for general-purpose LLM chat
+      - OPENAI_API_BASE_URLS=${OPENAI_API_BASE_URL:-https://openrouter.ai/api/v1}
+      - OPENAI_API_KEYS=${OPENAI_API_KEY:-}
+      # Enable API keys for programmatic access
+      - ENABLE_API_KEYS=true
+      # Disable signup after admin is created
+      - ENABLE_SIGNUP=true
+      - DEFAULT_USER_ROLE=user
+      # Webui name
+      - WEBUI_NAME=R2-DB2 Analytics
+    depends_on:
+      app:
+        condition: service_healthy
 
 networks:
   r2-db2-net:

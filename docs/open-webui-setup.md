@@ -1,96 +1,220 @@
-# Open WebUI Local Setup
+# Open WebUI Integration Setup Guide
 
-## 1. Overview
+This document describes how to set up Open WebUI as the frontend for the R2-DB2 Analytics Agent.
 
-- Open WebUI v0.8.5 is running locally via Docker
-- Accessible at http://localhost:3000
-- Part of the R2-DB2 analytical agent stack
+## Architecture Overview
 
-## 2. Architecture
+Open WebUI supports **dual-mode operation**:
 
-- Open WebUI container image: `ghcr.io/open-webui/open-webui:v0.8.5`
-- Host-to-container port mapping: `3000:8080`
-- Persistent volume mapping: `open-webui:/app/backend/data`
-- Connected to the `r2-db2-net` bridge network shared by R2-DB2 services
+```
+┌─────────────────────┐       ┌─────────────────────┐
+│   Open WebUI        │       │   R2-DB2 Backend      │
+│   (port 3000)       │──────▶│   (port 8000)        │
+│                     │       │                      │
+│  - General Chat     │  HTTP │  - /v1/models        │
+│  - R2-DB2 Analyst    │◀──────│  - /v1/chat/complete │
+│    (Pipe Function)  │       │  - /reports/{id}     │
+│  - Tools            │       │  - /api/r2-db2/v2/*   │
+│    (Download/SQL)   │       │                      │
+└─────────────────────┘       └─────────────────────┘
+         ▲
+         │
+    ┌────┴────┐
+    │ OpenRouter │
+    │ (or other │
+    │  LLM API) │
+    └───────────┘
+```
 
-## 3. Docker Compose Configuration
+### Modes Explained
 
-Service definition added to `docker-compose.yml`:
+| Mode | Purpose | Configuration |
+|------|---------|---------------|
+| **General Chat** | GPT-4, Claude, and other LLMs via OpenRouter | Admin Panel → Settings → Connections |
+| **R2-DB2 Analyst** | Data analysis agent via Pipe function | Admin Panel → Functions (upload `pipe_r2_db2_analyst.py`) |
+| **Tools** | Report download + SQL execution | Admin Panel → Tools (upload tool files) |
+
+## Prerequisites
+
+- Docker and Docker Compose installed
+- Admin account created in Open WebUI
+- `docker-compose.dev.yml` running with all services
+
+## Quick Start
+
+### 1. Start all services
+
+```bash
+docker compose -f docker-compose.dev.yml up -d
+```
+
+### 2. Verify services are running
+
+```bash
+# Check R2-DB2 backend health
+curl http://localhost:8000/health
+
+# Check Open WebUI (should redirect to login)
+curl -I http://localhost:3000
+
+# Check OpenAI-compatible models endpoint
+curl http://localhost:8000/v1/models
+```
+
+Expected `/v1/models` response:
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "r2-db2-analyst",
+      "object": "model",
+      "owned_by": "r2-db2"
+    }
+  ]
+}
+```
+
+### 3. Configure OpenRouter (General Models)
+
+1. Open `http://localhost:3000` in your browser
+2. Log in with your admin account
+3. Go to **Admin Panel → Settings → Connections**
+4. Under "OpenAI API", set:
+   - Base URL: `https://openrouter.ai/api/v1`
+   - API Key: Your OpenRouter API key
+5. Click Save
+
+### 4. Upload R2-DB2 Analyst Pipe
+
+1. Go to **Admin Panel → Functions**
+2. Click "+" or "Import"
+3. Copy-paste the contents of `openwebui/pipe_r2_db2_analyst.py`
+4. Save the function
+5. Click the gear icon → Set Valves:
+   - `R2_DB2_API_BASE_URL`: `http://app:8000/v1` (default)
+   - `R2_DB2_MODEL_ID`: `r2-db2-analyst`
+6. Enable the function (toggle on)
+
+### 5. Upload Tools (Optional)
+
+1. Go to **Admin Panel → Tools**
+2. Import `openwebui/tool_download_report.py` — for downloading PDF/CSV/Parquet reports
+3. Import `openwebui/tool_execute_sql.py` — for running read-only SQL queries
+
+### 6. Start chatting
+
+1. Start a new chat
+2. Select "R2-DB2 Analyst" from the model dropdown (alongside GPT-4, Claude, etc.)
+3. Ask data questions like:
+   - "What tables are available in the database?"
+   - "Show me total revenue by month for 2024"
+   - "Compare sales across regions"
+
+## Integration Methods
+
+Open WebUI connects to R2-DB2 via **two complementary methods**:
+
+### Method A: Direct OpenAI-Compatible Connection (Auto-configured)
+
+The `docker-compose.dev.yml` already configures Open WebUI to connect to the R2-DB2 backend via environment variables:
 
 ```yaml
-openwebui:
-  image: ghcr.io/open-webui/open-webui:v0.8.5
-  ports:
-    - "3000:8080"
-  volumes:
-    - open-webui:/app/backend/data
-  networks:
-    - r2-db2-net
-  restart: unless-stopped
+environment:
+  - OPENAI_API_BASE_URLS=http://app:8000/v1
+  - OPENAI_API_KEYS=sk-r2-db2-dev-key
+  - DEFAULT_MODELS=r2-db2-analyst
 ```
 
-## 4. Quick Start Commands
+This means the `r2-db2-analyst` model appears automatically in the model picker.
 
-```bash
-# Pull the image
-docker pull ghcr.io/open-webui/open-webui:v0.8.5
+### Method B: Pipe Function (Enhanced Experience)
 
-# Start only Open WebUI without affecting other services
-docker compose up -d --no-deps --no-build openwebui
+For richer integration with status indicators and better error handling, upload the Pipe function:
 
-# Check status
-docker ps --filter "name=openwebui"
+1. Go to **Workspace** → **Functions** in the admin panel
+2. Click **+ Create a Function**
+3. Set the type to **Pipe**
+4. Copy-paste the content of `openwebui/pipe_r2_db2_analyst.py`
+5. Save and **Enable** the function
+6. Configure **Valves** (click ⚙️ gear icon):
+   - `R2_DB2_API_BASE_URL`: `http://app:8000/v1` (default)
+   - `R2_DB2_API_KEY`: `sk-r2-db2-dev-key` (default)
 
-# View logs
-docker compose logs --tail=50 openwebui
+### Method C: Tools (Add-on capabilities)
 
-# Stop Open WebUI only
-docker compose stop openwebui
+Upload these tools for additional functionality:
 
-# Remove Open WebUI container data persists in volume
-docker compose rm -f openwebui
-```
+#### Download Report Tool
+1. Go to **Workspace** → **Tools**
+2. Click **+ Create a Tool**
+3. Copy-paste `openwebui/tool_download_report.py`
+4. Save and enable
+5. Attach the tool to your chat via the **+** button
 
-## 5. Verification Steps
+#### Execute SQL Tool
+1. Go to **Workspace** → **Tools**
+2. Click **+ Create a Tool**
+3. Copy-paste `openwebui/tool_execute_sql.py`
+4. Save and enable
+5. Attach the tool to your chat via the **+** button
 
-```bash
-# Port check
-ss -tlnp | grep :3000
+## Features Available Through Open WebUI
 
-# HTTP health check
-curl -s -o /dev/null -w "HTTP_STATUS: %{http_code}\n" http://localhost:3000/
+| Feature | How it works |
+|---------|-------------|
+| **Natural language queries** | Type questions in the chat, agent generates SQL and analysis |
+| **Result tables** | Query results appear as markdown tables in chat |
+| **Charts** | Plotly charts are referenced in the response with view links |
+| **Report downloads** | Use the Download Report tool or click links in responses |
+| **SQL execution** | Use the Execute SQL tool to run custom queries |
+| **Conversation history** | Open WebUI stores chat history automatically |
+| **Follow-up questions** | Continue chatting to refine analysis |
 
-# Browser access
-# Navigate to http://localhost:3000
-```
+## Docker Compose Environment Variables
 
-## 6. First-Time Setup
+Key environment variables set on the `openwebui` service:
 
-- On first access, Open WebUI prompts for admin account creation
-- No external LLM API key is required to start; add one later in Settings if needed
-- Data persists in the `open-webui` Docker volume
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `ENABLE_OLLAMA_API` | `false` | Disable Ollama (not used) |
+| `OPENAI_API_BASE_URLS` | `http://app:8000/v1` | R2-DB2 backend API URL |
+| `OPENAI_API_KEYS` | `sk-r2-db2-dev-key` | API key for R2-DB2 backend |
+| `DEFAULT_MODELS` | `r2-db2-analyst` | Default model for new chats |
+| `ENABLE_API_KEYS` | `true` | Allow programmatic access |
+| `ENABLE_SIGNUP` | `false` | Disable public registration |
+| `WEBUI_NAME` | `R2-DB2 Analytics` | Custom UI title |
 
-## 7. Troubleshooting
+## Troubleshooting
 
-- **Port 3000 occupied**: Change the host port in `docker-compose.yml`, for example `"3001:8080"`
-- **Container starts but port not published**: Recreate with:
-  ```bash
-  docker compose up -d --no-deps --no-build --force-recreate openwebui
-  ```
-- **DNS issues during pull**: Docker must be able to reach `ghcr.io`; if behind a proxy, configure Docker daemon proxy settings
-- **Data reset**: Remove the volume with:
-  ```bash
-  docker volume rm open-webui
-  ```
-  Caution: this destroys all Open WebUI data
+### Model not showing in Open WebUI
+1. Check that the R2-DB2 backend is healthy: `curl http://localhost:8000/health`
+2. Check the models endpoint: `curl http://localhost:8000/v1/models`
+3. In Open WebUI Admin → Settings → Connections, verify the OpenAI base URL is `http://app:8000/v1`
 
-## 8. Service Ports Summary R2-DB2 Stack
+### "Error connecting to R2-DB2 backend"
+1. Ensure both containers are on the same Docker network
+2. Check container logs: `docker compose -f docker-compose.dev.yml logs app`
+3. Verify the R2-DB2 backend is running on port 8000
 
-| Service | Port(s) | Purpose |
-|---------|---------|---------|
-| app | 8000 | R2-DB2 FastAPI backend |
-| clickhouse | 8123, 9000 | Analytics database |
-| postgres | 5432 | Schema and metadata catalog |
-| redis | 6379 | Caching layer |
-| qdrant | 6333, 6334 | Vector search |
-| **openwebui** | **3000** | **Web UI frontend** |
+### Chat returns empty or error responses
+1. Check R2-DB2 backend logs for errors
+2. Verify ClickHouse is seeded and accessible
+3. Try the internal API directly: `curl -X POST http://localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"r2-db2-analyst","messages":[{"role":"user","content":"Hello"}]}'`
+
+### OpenRouter not working
+1. Verify your OpenRouter API key is correct
+2. Check that the base URL is `https://openrouter.ai/api/v1`
+3. Ensure the connection is enabled in Admin Panel → Settings → Connections
+
+## File Reference
+
+| File | Purpose |
+|------|---------|
+| `src/r2-db2/servers/fastapi/openai_models.py` | Pydantic models for OpenAI-compatible API |
+| `src/r2-db2/servers/fastapi/openai_routes.py` | OpenAI-compatible route handlers |
+| `src/r2-db2/servers/fastapi/app.py` | FastAPI app (registers OpenAI routes) |
+| `docker-compose.dev.yml` | Docker services including Open WebUI config |
+| `openwebui/pipe_r2_db2_analyst.py` | Pipe function for enhanced Open WebUI integration |
+| `openwebui/tool_download_report.py` | Tool for downloading reports |
+| `openwebui/tool_execute_sql.py` | Tool for executing SQL queries |

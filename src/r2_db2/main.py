@@ -3,14 +3,25 @@
 from __future__ import annotations
 
 import logging
+import uuid as _uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from r2-db2.config.settings import get_settings
 from r2-db2.graph.builder import build_graph
+from r2-db2.servers.fastapi.openai_models import (
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    ChatChoice,
+    ChatMessageResponse,
+    ModelsListResponse,
+    ModelInfo,
+    UsageInfo,
+)
 from r2-db2.servers.fastapi.routes import register_chat_routes
 
 logger = logging.getLogger(__name__)
@@ -93,6 +104,59 @@ def create_app() -> FastAPI:
     from r2-db2.servers.fastapi.graph_routes import router as graph_router
 
     app.include_router(graph_router, prefix="/api/v1", tags=["graph"])
+
+    # Register OpenAI-compatible routes for Open WebUI integration
+    openai_router = APIRouter(prefix="/v1", tags=["openai-compat"])
+
+    @openai_router.get("/models")
+    async def list_models():
+        return ModelsListResponse(
+            data=[ModelInfo(id="r2-db2-analyst", owned_by="r2-db2")]
+        )
+
+    @openai_router.post("/chat/completions")
+    async def chat_completions(request: Request, body: ChatCompletionRequest):
+        # Extract last user message
+        user_message = ""
+        for msg in reversed(body.messages):
+            if msg.role == "user" and msg.content:
+                user_message = msg.content
+                break
+
+        if not user_message:
+            return ChatCompletionResponse(
+                model=body.model,
+                choices=[ChatChoice(message=ChatMessageResponse(content="No user message found."))],
+            )
+
+        conversation_id = body.conversation_id or str(_uuid.uuid4())
+        thread_config = {"configurable": {"thread_id": conversation_id}}
+
+        # Invoke the graph with dict-style messages matching graph_routes.py pattern
+        result = await request.app.state.graph.ainvoke(
+            {"messages": [{"role": "user", "content": user_message}]},
+            config=thread_config,
+        )
+
+        # Extract response from graph result (messages are dicts, not LangChain objects)
+        messages = result.get("messages", [])
+        ai_messages = [m for m in messages if m.get("role") == "assistant"]
+        if ai_messages:
+            content = ai_messages[-1].get("content", "No response generated.")
+        else:
+            content = "No response generated."
+
+        return ChatCompletionResponse(
+            model=body.model,
+            choices=[ChatChoice(message=ChatMessageResponse(content=content))],
+            usage=UsageInfo(
+                prompt_tokens=0,
+                completion_tokens=len(content.split()),
+                total_tokens=len(content.split()),
+            ),
+        )
+
+    app.include_router(openai_router)
 
     try:
         from r2-db2.core import Agent

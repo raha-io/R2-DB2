@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ...core import Agent
 from ..base import ChatHandler
+from .openai_routes import register_openai_routes
 from .routes import register_chat_routes
 
 
@@ -56,6 +57,7 @@ class R2-DB2FastAPIServer:
 
         # Register routes
         register_chat_routes(app, self.chat_handler, self.config)
+        register_openai_routes(app, self.agent)
 
         # Add health check
         @app.get("/health")
