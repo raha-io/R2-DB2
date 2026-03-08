@@ -243,14 +243,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     
     # Create R2-DB2 Agent for OpenAI-compatible streaming
     logger.info("Creating R2-DB2 Agent for OpenAI-compatible streaming...")
+    agent = None
     try:
         agent = await _create_r2_db2_agent(settings)
         app.state.agent = agent
-        # Register OpenAI-compatible routes NOW that the agent is available
-        register_openai_routes(app, agent)
-        logger.info("OpenAI-compatible routes registered with streaming support")
+        logger.info("R2-DB2 Agent created successfully")
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to create R2-DB2 Agent (OpenAI routes not registered): %s", exc)
+        logger.warning("Failed to create R2-DB2 Agent: %s", exc)
+        logger.info("OpenAI routes will use graph-based streaming only (no Agent fallback)")
+
+    # Register OpenAI-compatible routes with graph (and optionally agent)
+    # The graph-based streaming path works even without the Agent
+    register_openai_routes(app, agent, graph=graph)
+    logger.info("OpenAI-compatible routes registered (graph streaming enabled)")
 
     logger.info("R2-DB2 analytical agent ready")
     yield

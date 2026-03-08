@@ -476,7 +476,7 @@ logger = logging.getLogger(__name__)
 R2_DB2_MODEL_ID = "r2-db2-analyst"
 
 
-def register_openai_routes(app: FastAPI, agent) -> None:
+def register_openai_routes(app: FastAPI, agent, graph=None) -> None:
     """Register OpenAI-compatible /v1 routes on the FastAPI app.
     
     Args:
@@ -484,7 +484,8 @@ def register_openai_routes(app: FastAPI, agent) -> None:
         agent: The R2-DB2 agent instance.
     """
     router = APIRouter(prefix="/v1", tags=["openai-compat"])
-    chat_handler = ChatHandler(agent)
+    chat_handler = ChatHandler(agent) if agent is not None else None
+    _graph = graph
 
     @router.get("/models")
     async def list_models():
@@ -530,17 +531,45 @@ def register_openai_routes(app: FastAPI, agent) -> None:
 
         # 3. Branch: streaming vs non-streaming
         if body.stream:
-            return StreamingResponse(
-                _stream_response(chat_handler, chat_req, body.model),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                },
+            # Prefer graph-based streaming with thinking indicators if graph is available
+            if _graph is not None:
+                return StreamingResponse(
+                    _stream_graph_response(_graph, user_message, body.model, body.conversation_id),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                    },
+                )
+            if chat_handler is not None:
+                return StreamingResponse(
+                    _stream_response(chat_handler, chat_req, body.model),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                    },
+                )
+            return ChatCompletionResponse(
+                model=body.model,
+                choices=[
+                    ChatChoice(message=ChatMessageResponse(content="Service unavailable: no graph or agent configured."))
+                ],
             )
         else:
-            return await _non_stream_response(chat_handler, chat_req, body.model)
+            # Prefer graph-based non-streaming if graph is available
+            if _graph is not None:
+                return await _non_stream_graph_response(_graph, user_message, body.model, body.conversation_id)
+            if chat_handler is not None:
+                return await _non_stream_response(chat_handler, chat_req, body.model)
+            return ChatCompletionResponse(
+                model=body.model,
+                choices=[
+                    ChatChoice(message=ChatMessageResponse(content="Service unavailable: no graph or agent configured."))
+                ],
+            )
 
     app.include_router(router)
 
@@ -573,6 +602,65 @@ async def _non_stream_response(
             prompt_tokens=0,
             completion_tokens=len(full_text.split()),
             total_tokens=len(full_text.split()),
+        ),
+    )
+
+
+async def _non_stream_graph_response(
+    graph,
+    user_message: str,
+    model: str,
+    conversation_id: str | None = None,
+) -> ChatCompletionResponse:
+    """Run the graph to completion and return a single ChatCompletionResponse."""
+    import uuid as _uuid
+
+    conv_id = conversation_id or str(_uuid.uuid4())
+    thread_id = f"{conv_id}-{_uuid.uuid4().hex[:8]}"
+    config = {"configurable": {"thread_id": thread_id}}
+
+    initial_state = {
+        "conversation_id": conv_id,
+        "user_id": "anonymous",
+        "messages": [{"role": "user", "content": user_message}],
+        "intent": None,
+        "plan": None,
+        "plan_approved": False,
+        "schema_context": "",
+        "historical_queries": [],
+        "generated_sql": None,
+        "sql_validation_errors": [],
+        "sql_retry_count": 0,
+        "graph_step_count": 0,
+        "query_result": None,
+        "execution_time_ms": None,
+        "analysis_summary": None,
+        "analysis_artifacts": [],
+        "report": None,
+        "total_llm_tokens": 0,
+        "estimated_cost_usd": 0.0,
+        "trace_id": str(_uuid.uuid4()),
+        "error": None,
+        "error_node": None,
+    }
+
+    try:
+        result = await graph.ainvoke(initial_state, config)
+        messages = result.get("messages", [])
+        last_msg = messages[-1].get("content", "") if messages else "No response generated."
+    except Exception as exc:
+        logger.exception("Error during graph processing")
+        last_msg = f"Error: {exc}"
+
+    return ChatCompletionResponse(
+        model=model,
+        choices=[
+            ChatChoice(message=ChatMessageResponse(content=last_msg))
+        ],
+        usage=UsageInfo(
+            prompt_tokens=0,
+            completion_tokens=len(last_msg.split()),
+            total_tokens=len(last_msg.split()),
         ),
     )
 
@@ -628,6 +716,136 @@ async def _stream_response(
     finally:
         # Final chunk and terminal SSE marker should always be sent,
         # even when streaming raises an exception.
+        done_chunk = ChatCompletionChunk(
+            id=completion_id,
+            model=model,
+            choices=[
+                StreamChoice(
+                    delta=DeltaContent(),
+                    finish_reason="stop",
+                )
+            ],
+        )
+        yield f"data: {done_chunk.model_dump_json()}\n\n"
+        yield "data: [DONE]\n\n"
+
+
+# Mapping from graph node names to user-friendly thinking messages
+_NODE_THINKING_MAP = {
+    "intent_classify": "🔍 Understanding your question...\n\n",
+    "context_retrieve": "📚 Loading database schema...\n\n",
+    "plan": "📋 Creating analysis plan...\n\n",
+    "hitl_approval": "",
+    "sql_generate": "⚙️ Writing SQL query...\n\n",
+    "sql_validate": "🔎 Validating SQL...\n\n",
+    "sql_execute": "🚀 Running query on ClickHouse...\n\n",
+    "analysis_sandbox": "📊 Analyzing results...\n\n",
+    "report_assemble": "📝 Building report...\n\n",
+    "final_response": "",
+}
+
+
+async def _stream_graph_response(
+    graph,
+    user_message: str,
+    model: str,
+    conversation_id: str | None = None,
+) -> AsyncGenerator[str, None]:
+    """Stream OpenAI-format SSE chunks using the LangGraph with thinking indicators."""
+    import uuid as _uuid
+
+    completion_id = f"chatcmpl-{_uuid.uuid4().hex[:12]}"
+    conv_id = conversation_id or str(_uuid.uuid4())
+    thread_id = f"{conv_id}-{_uuid.uuid4().hex[:8]}"
+    config = {"configurable": {"thread_id": thread_id}}
+
+    initial_state = {
+        "conversation_id": conv_id,
+        "user_id": "anonymous",
+        "messages": [{"role": "user", "content": user_message}],
+        "intent": None,
+        "plan": None,
+        "plan_approved": False,
+        "schema_context": "",
+        "historical_queries": [],
+        "generated_sql": None,
+        "sql_validation_errors": [],
+        "sql_retry_count": 0,
+        "graph_step_count": 0,
+        "query_result": None,
+        "execution_time_ms": None,
+        "analysis_summary": None,
+        "analysis_artifacts": [],
+        "report": None,
+        "total_llm_tokens": 0,
+        "estimated_cost_usd": 0.0,
+        "trace_id": str(_uuid.uuid4()),
+        "error": None,
+        "error_node": None,
+    }
+
+    # First chunk: send role
+    first_chunk = ChatCompletionChunk(
+        id=completion_id,
+        model=model,
+        choices=[
+            StreamChoice(
+                delta=DeltaContent(role="assistant", content=""),
+            )
+        ],
+    )
+    yield f"data: {first_chunk.model_dump_json()}\n\n"
+
+    try:
+        async for event in graph.astream(initial_state, config, stream_mode="updates"):
+            for node_name, node_output in event.items():
+                _ = node_output
+                thinking_msg = _NODE_THINKING_MAP.get(node_name, "")
+                if thinking_msg:
+                    thinking_chunk = ChatCompletionChunk(
+                        id=completion_id,
+                        model=model,
+                        choices=[
+                            StreamChoice(
+                                delta=DeltaContent(content=thinking_msg),
+                            )
+                        ],
+                    )
+                    yield f"data: {thinking_chunk.model_dump_json()}\n\n"
+
+        # Get final state and emit the actual response
+        final_state = await graph.aget_state(config)
+        values = dict(final_state.values) if final_state.values else {}
+
+        messages = values.get("messages", [])
+        last_msg = messages[-1].get("content", "") if messages else ""
+
+        if last_msg:
+            # Emit the final response content
+            content_chunk = ChatCompletionChunk(
+                id=completion_id,
+                model=model,
+                choices=[
+                    StreamChoice(
+                        delta=DeltaContent(content="\n---\n\n" + last_msg + "\n"),
+                    )
+                ],
+            )
+            yield f"data: {content_chunk.model_dump_json()}\n\n"
+
+    except Exception as exc:
+        logger.exception("Error during graph streaming")
+        error_chunk = ChatCompletionChunk(
+            id=completion_id,
+            model=model,
+            choices=[
+                StreamChoice(
+                    delta=DeltaContent(content=f"\n\n❌ Error: {exc}"),
+                )
+            ],
+        )
+        yield f"data: {error_chunk.model_dump_json()}\n\n"
+    finally:
         done_chunk = ChatCompletionChunk(
             id=completion_id,
             model=model,

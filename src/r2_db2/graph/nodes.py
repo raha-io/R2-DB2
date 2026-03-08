@@ -65,7 +65,14 @@ def intent_classify(state: AnalyticalAgentState) -> dict[str, Any]:
         intent = "new_analysis"
 
     logger.info("Classified intent: %s", intent)
-    return {"intent": intent}
+    return {
+        "intent": intent,
+        "sql_retry_count": 0,
+        "graph_step_count": 0,
+        "sql_validation_errors": [],
+        "error": None,
+        "error_node": None,
+    }
 
 
 def context_retrieve(state: AnalyticalAgentState) -> dict[str, Any]:
@@ -147,6 +154,18 @@ def hitl_approval(state: AnalyticalAgentState) -> dict[str, Any]:
 
 def sql_generate(state: AnalyticalAgentState) -> dict[str, Any]:
     """Generate SQL query from the approved plan."""
+    # Global step guard to prevent infinite loops
+    step_count = state.get("graph_step_count", 0) + 1
+    MAX_GRAPH_STEPS = 10
+    if step_count > MAX_GRAPH_STEPS:
+        logger.error("Graph step limit reached (%d). Aborting SQL generation.", step_count)
+        return {
+            "generated_sql": None,
+            "sql_validation_errors": ["Maximum graph step limit reached. Aborting."],
+            "sql_retry_count": MAX_GRAPH_STEPS,  # Force routing to final_response
+            "graph_step_count": step_count,
+        }
+
     llm = _get_llm()
     plan_data = state.get("plan", {})
     schema_context = state.get("schema_context", "")
@@ -186,7 +205,7 @@ def sql_generate(state: AnalyticalAgentState) -> dict[str, Any]:
         sql = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
 
     logger.info("Generated SQL: %s", sql[:200])
-    return {"generated_sql": sql, "sql_validation_errors": []}
+    return {"generated_sql": sql, "sql_validation_errors": [], "graph_step_count": step_count}
 
 
 def sql_validate(state: AnalyticalAgentState) -> dict[str, Any]:
@@ -197,6 +216,25 @@ def sql_validate(state: AnalyticalAgentState) -> dict[str, Any]:
     if not sql:
         errors.append("No SQL generated")
         return {"sql_validation_errors": errors}
+
+    # Detect non-SQL output (e.g., LLM returned JSON instead of SQL)
+    stripped = sql.strip()
+    if stripped.startswith("{") or stripped.startswith("["):
+        errors.append("LLM returned JSON instead of SQL. Expected a SELECT query.")
+        logger.warning("Non-SQL output detected: %s", stripped[:100])
+        retry_count = state.get("sql_retry_count", 0)
+        return {
+            "sql_validation_errors": errors,
+            "sql_retry_count": retry_count + 1,
+        }
+
+    if not stripped.upper().startswith("SELECT"):
+        errors.append(f"Query must start with SELECT. Got: {stripped[:50]}")
+        retry_count = state.get("sql_retry_count", 0)
+        return {
+            "sql_validation_errors": errors,
+            "sql_retry_count": retry_count + 1,
+        }
 
     sql_upper = sql.upper().strip()
 

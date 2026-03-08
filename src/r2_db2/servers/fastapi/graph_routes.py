@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 import uuid
+import json as _json
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 router = APIRouter()
@@ -67,6 +69,7 @@ async def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeResponse:
         "generated_sql": None,
         "sql_validation_errors": [],
         "sql_retry_count": 0,
+        "graph_step_count": 0,
         "query_result": None,
         "execution_time_ms": None,
         "analysis_summary": None,
@@ -106,6 +109,109 @@ async def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeResponse:
     except Exception as exc:  # noqa: BLE001
         logger.error("Analysis failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# Mapping from graph node names to user-friendly status messages
+_NODE_STATUS_MAP = {
+    "intent_classify": "🔍 Classifying your question...",
+    "context_retrieve": "📚 Retrieving schema context...",
+    "plan": "📋 Creating analysis plan...",
+    "hitl_approval": "✅ Checking approval...",
+    "sql_generate": "⚙️ Generating SQL query...",
+    "sql_validate": "🔎 Validating SQL...",
+    "sql_execute": "🚀 Executing query on ClickHouse...",
+    "analysis_sandbox": "📊 Analyzing results...",
+    "report_assemble": "📝 Assembling report...",
+    "final_response": "✨ Preparing response...",
+}
+
+
+@router.post("/analyze/stream")
+async def analyze_stream(request: AnalyzeRequest, req: Request) -> StreamingResponse:
+    """Submit a question and stream thinking/status updates as SSE events.
+
+    Each graph node emits a status event so the user sees progress.
+    The final event contains the complete result.
+    """
+    graph = req.app.state.graph
+
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+    thread_id = f"{conversation_id}-{uuid.uuid4().hex[:8]}"
+    config = {"configurable": {"thread_id": thread_id}}
+
+    initial_state = {
+        "conversation_id": conversation_id,
+        "user_id": request.user_id,
+        "messages": [{"role": "user", "content": request.question}],
+        "intent": None,
+        "plan": None,
+        "plan_approved": False,
+        "schema_context": "",
+        "historical_queries": [],
+        "generated_sql": None,
+        "sql_validation_errors": [],
+        "sql_retry_count": 0,
+        "graph_step_count": 0,
+        "query_result": None,
+        "execution_time_ms": None,
+        "analysis_summary": None,
+        "analysis_artifacts": [],
+        "report": None,
+        "total_llm_tokens": 0,
+        "estimated_cost_usd": 0.0,
+        "trace_id": str(uuid.uuid4()),
+        "error": None,
+        "error_node": None,
+    }
+
+    async def _event_generator():
+        try:
+            async for event in graph.astream(initial_state, config, stream_mode="updates"):
+                for node_name, _node_output in event.items():
+                    status_msg = _NODE_STATUS_MAP.get(
+                        node_name, f"Processing {node_name}..."
+                    )
+                    # Emit a thinking/status event
+                    status_event = {
+                        "type": "status",
+                        "node": node_name,
+                        "message": status_msg,
+                    }
+                    yield f"data: {_json.dumps(status_event)}\\n\\n"
+
+            # Get final state
+            final_state = await graph.aget_state(config)
+            values = dict(final_state.values) if final_state.values else {}
+
+            messages = values.get("messages", [])
+            last_msg = messages[-1].get("content", "") if messages else ""
+
+            result_event = {
+                "type": "result",
+                "conversation_id": conversation_id,
+                "thread_id": thread_id,
+                "status": "completed" if not values.get("error") else "error",
+                "intent": values.get("intent"),
+                "response": last_msg,
+                "error": values.get("error"),
+            }
+            yield f"data: {_json.dumps(result_event)}\\n\\n"
+            yield "data: [DONE]\\n\\n"
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Streaming analysis failed: %s", exc, exc_info=True)
+            error_event = {
+                "type": "result",
+                "conversation_id": conversation_id,
+                "thread_id": thread_id,
+                "status": "error",
+                "intent": None,
+                "response": "",
+                "error": str(exc),
+            }
+            yield f"data: {_json.dumps(error_event)}\\n\\n"
+            yield "data: [DONE]\\n\\n"
+
+    return StreamingResponse(_event_generator(), media_type="text/event-stream")
 
 
 @router.post("/approve", response_model=AnalyzeResponse)

@@ -14,6 +14,7 @@ from r2-db2.graph.state import AnalyticalAgentState
 logger = logging.getLogger(__name__)
 
 MAX_SQL_RETRIES = 3
+MAX_GRAPH_STEPS = 10
 
 
 def _compile_graph(builder: StateGraph, checkpointer: Any, hitl_enabled: bool) -> Any:
@@ -45,6 +46,12 @@ def _route_after_sql_validate(state: AnalyticalAgentState) -> str:
     """Route based on SQL validation result."""
     errors = state.get("sql_validation_errors", [])
     retry_count = state.get("sql_retry_count", 0)
+    step_count = state.get("graph_step_count", 0)
+
+    # Global step guard — prevent infinite loops regardless of validation result
+    if step_count >= MAX_GRAPH_STEPS:
+        logger.error("Global step limit reached (%d). Routing to final_response.", step_count)
+        return "final_response"
 
     if not errors:
         return "sql_execute"
@@ -55,6 +62,13 @@ def _route_after_sql_validate(state: AnalyticalAgentState) -> str:
 
 def _route_after_sql_execute(state: AnalyticalAgentState) -> str:
     """Route based on SQL execution result."""
+    step_count = state.get("graph_step_count", 0)
+
+    # Global step guard
+    if step_count >= MAX_GRAPH_STEPS:
+        logger.error("Global step limit reached (%d). Routing to final_response.", step_count)
+        return "final_response"
+
     if state.get("error") and state.get("error_node") == "sql_execute":
         retry_count = state.get("sql_retry_count", 0)
         if retry_count < MAX_SQL_RETRIES:

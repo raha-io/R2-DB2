@@ -33,8 +33,9 @@ class AnalyticalAgentState(TypedDict, total=False):
 
     # SQL generation & execution
     generated_sql: str | None
-    sql_validation_errors: Annotated[list[str], operator.add]
+    sql_validation_errors: list[str]
     sql_retry_count: int
+    graph_step_count: int  # Global step counter to prevent infinite loops
     query_result: dict[str, Any] | None
     execution_time_ms: int | None
 
