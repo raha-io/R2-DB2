@@ -1,8 +1,6 @@
-"""ClickHouse integration for the R2-DB2 analytical agent.
+"""ClickHouse integration: schema catalog, seed orchestration, and helpers."""
 
-Provides schema catalog for context retrieval and data seeding for development.
-"""
+from r2-db2.integrations.clickhouse.schema_catalog import get_schema_context
+from r2-db2.integrations.clickhouse.seed import seed_clickhouse, seed_clickhouse_sync
 
-from .schema_catalog import get_schema_context
-
-__all__ = ["get_schema_context"]
+__all__ = ["get_schema_context", "seed_clickhouse", "seed_clickhouse_sync"]
