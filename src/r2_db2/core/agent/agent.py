@@ -5,9 +5,10 @@ This module provides the main Agent class that orchestrates the interaction
 between LLM services, tools, and conversation storage.
 """
 
+import asyncio
 import traceback
 import uuid
-from typing import TYPE_CHECKING, AsyncGenerator, List, Optional
+from typing import TYPE_CHECKING, AsyncGenerator, Awaitable, Callable, List, Optional
 
 from r2-db2.components import (
     UiComponent,
@@ -649,8 +650,31 @@ class Agent:
                 pass
 
             # Get LLM response
+            stream_state = {"emitted_text": False}
             if self.config.stream_responses:
-                response = await self._handle_streaming_response(request)
+                stream_queue: asyncio.Queue[UiComponent] = asyncio.Queue()
+
+                async def _enqueue_stream_component(component: UiComponent) -> None:
+                    await stream_queue.put(component)
+
+                response_task = asyncio.create_task(
+                    self._handle_streaming_response(
+                        request,
+                        on_stream_component=_enqueue_stream_component,
+                        stream_state=stream_state,
+                    )
+                )
+
+                while not response_task.done() or not stream_queue.empty():
+                    try:
+                        streamed_component = await asyncio.wait_for(
+                            stream_queue.get(), timeout=0.05
+                        )
+                        yield streamed_component
+                    except asyncio.TimeoutError:
+                        continue
+
+                response = await response_task
             else:
                 response = await self._send_llm_request(request)
 
@@ -667,7 +691,7 @@ class Agent:
                 )
                 conversation.add_message(assistant_message)
 
-                if response.content is not None:
+                if response.content is not None and not stream_state.get("emitted_text"):
                     # Yield any partial content from the assistant before tool execution
                     has_tool_invocation_message_in_chat = (
                         self.config.ui_features.can_user_access_feature(
@@ -1033,12 +1057,16 @@ class Agent:
                     conversation.add_message(
                         Message(role="assistant", content=response.content)
                     )
-                    yield UiComponent(
-                        rich_component=RichTextComponent(
-                            content=response.content, markdown=True
-                        ),
-                        simple_component=SimpleTextComponent(text=response.content),
-                    )
+
+                    # If we already streamed incremental text chunks, avoid duplicating
+                    # the full response in the outgoing stream.
+                    if not stream_state.get("emitted_text"):
+                        yield UiComponent(
+                            rich_component=RichTextComponent(
+                                content=response.content, markdown=True
+                            ),
+                            simple_component=SimpleTextComponent(text=response.content),
+                        )
                 break
 
         # Check if we hit the tool iteration limit
@@ -1312,7 +1340,12 @@ You can:
 
         return response
 
-    async def _handle_streaming_response(self, request: LlmRequest) -> LlmResponse:
+    async def _handle_streaming_response(
+        self,
+        request: LlmRequest,
+        on_stream_component: Optional[Callable[[UiComponent], Awaitable[None]]] = None,
+        stream_state: Optional[dict] = None,
+    ) -> LlmResponse:
         """Handle streaming response from LLM."""
         # Apply before_llm_request middlewares with observability
         for middleware in self.llm_middlewares:
@@ -1356,7 +1389,15 @@ You can:
         async for chunk in self.llm_service.stream_request(request):
             if chunk.content:
                 accumulated_content += chunk.content
-                # Could yield intermediate TextChunk here
+
+                # Forward incremental text chunks to caller so HTTP/SSE clients
+                # receive tokens in real-time instead of waiting for completion.
+                if on_stream_component is not None:
+                    await on_stream_component(
+                        UiComponent(simple_component=SimpleTextComponent(text=chunk.content))
+                    )
+                    if stream_state is not None:
+                        stream_state["emitted_text"] = True
 
             if chunk.tool_calls:
                 accumulated_tool_calls.extend(chunk.tool_calls)

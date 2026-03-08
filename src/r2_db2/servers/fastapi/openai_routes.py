@@ -62,10 +62,22 @@ def _rich_to_markdown(rich_data: Dict[str, Any]) -> str:
     """
     component_type = rich_data.get("type", "")
     data = rich_data.get("data", {})
-    
-    # Skip status/progress indicators (these are "thinking" indicators)
-    if component_type in ("status_card", "progress_display", "progress_bar", 
-                          "status_indicator", "status_bar_update"):
+
+    # Emit concise status updates for streaming progress visibility.
+    if component_type == "status_card":
+        return _status_card_to_markdown(data)
+    if component_type == "status_bar_update":
+        return _status_bar_update_to_markdown(data)
+
+    # Skip noisy/internal UI-only components.
+    if component_type in (
+        "progress_display",
+        "progress_bar",
+        "status_indicator",
+        "task_tracker_update",
+        "chat_input_update",
+        "tool_execution",
+    ):
         return ""
     
     # Handle different rich component types
@@ -102,6 +114,28 @@ def _rich_to_markdown(rich_data: Dict[str, Any]) -> str:
     
     # Fallback: convert the whole component to string
     return str(rich_data)
+
+
+def _status_card_to_markdown(data: Dict[str, Any]) -> str:
+    """Convert StatusCardComponent data to concise markdown status text."""
+    description = data.get("description")
+    title = data.get("title")
+    status = data.get("status")
+
+    text = description or title or status or "Working..."
+    return f"⏳ *Processing: {text}*\n\n"
+
+
+def _status_bar_update_to_markdown(data: Dict[str, Any]) -> str:
+    """Convert StatusBarUpdateComponent data to concise markdown status text."""
+    message = data.get("message")
+    detail = data.get("detail")
+    status = data.get("status")
+
+    text = message or detail or status
+    if not text:
+        return ""
+    return f"⏳ *{text}*\n\n"
 
 
 def _dataframe_to_markdown(data: Dict[str, Any]) -> str:
@@ -591,17 +625,18 @@ async def _stream_response(
             ],
         )
         yield f"data: {error_chunk.model_dump_json()}\n\n"
-
-    # Final chunk: finish_reason
-    done_chunk = ChatCompletionChunk(
-        id=completion_id,
-        model=model,
-        choices=[
-            StreamChoice(
-                delta=DeltaContent(),
-                finish_reason="stop",
-            )
-        ],
-    )
-    yield f"data: {done_chunk.model_dump_json()}\n\n"
-    yield "data: [DONE]\n\n"
+    finally:
+        # Final chunk and terminal SSE marker should always be sent,
+        # even when streaming raises an exception.
+        done_chunk = ChatCompletionChunk(
+            id=completion_id,
+            model=model,
+            choices=[
+                StreamChoice(
+                    delta=DeltaContent(),
+                    finish_reason="stop",
+                )
+            ],
+        )
+        yield f"data: {done_chunk.model_dump_json()}\n\n"
+        yield "data: [DONE]\n\n"
