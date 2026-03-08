@@ -1,13 +1,9 @@
+"""R2-DB2 integration backends.
+
+Active integrations for the LangGraph runtime:
+- clickhouse/ — Schema catalog and data seeding
+- plotly/ — Chart generation
+- local/ — Local file system utilities
 """
-Integrations module.
 
-This package contains concrete implementations of core abstractions and capabilities.
-"""
-
-from .local import MemoryConversationStore
-from .plotly import PlotlyChartGenerator
-
-__all__ = [
-    "MemoryConversationStore",
-    "PlotlyChartGenerator",
-]
+__all__: list[str] = []

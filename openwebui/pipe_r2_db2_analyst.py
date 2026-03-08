@@ -35,7 +35,7 @@ class Pipe:
             description="Model ID exposed by the R2-DB2 backend.",
         )
         USE_GRAPH_API: bool = Field(
-            default=True,
+            default=False,
             description="Use LangGraph-native API endpoints (/api/v1/analyze*) instead of OpenAI-compatible /v1/chat/completions.",
         )
         REQUEST_TIMEOUT: int = Field(
@@ -72,6 +72,11 @@ class Pipe:
 
         if not question:
             return "⚠️ No user question found in the request payload."
+
+        logger.info(
+            "pipe() called: stream=%s, question_len=%d, conversation_id=%s",
+            stream, len(question), conversation_id,
+        )
 
         await self._emit_status(
             __event_emitter__, "🔍 Analyzing your question...", done=False
@@ -198,7 +203,7 @@ class Pipe:
                             message = event_data.get("message", f"Processing {node}...")
                             status_emitted = True
                             await self._emit_status(event_emitter, message, done=False)
-                            yield f"⏳ {message}\n\n"
+                            # Status shown via event_emitter only, not as content
                         elif event_type == "result":
                             final_result = event_data
 

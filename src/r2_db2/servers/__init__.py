@@ -1,7 +1,6 @@
 """R2-DB2 server adapters.
 
 Runtime server is built via src/r2-db2/main.py using graph routes and OpenAI-compatible routes.
-Legacy chat handler and R2-DB2FastAPIServer have been removed.
 """
 
 from r2-db2.servers.fastapi.graph_routes import router as graph_router

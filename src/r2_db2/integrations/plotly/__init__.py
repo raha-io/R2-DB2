@@ -1,4 +1,4 @@
-"""Plotly integration for chart generation."""
+"""Plotly chart generation integration."""
 
 from .chart_generator import PlotlyChartGenerator
 

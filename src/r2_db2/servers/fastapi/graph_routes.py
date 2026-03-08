@@ -9,13 +9,14 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+
+# ── Request / Response models ───────────────────────────────────
 
 class AnalyzeRequest(BaseModel):
     """Request to start a new analysis."""
@@ -47,20 +48,14 @@ class ApproveRequest(BaseModel):
     approved: bool = Field(..., description="Whether to approve the plan")
 
 
-@router.post("/analyze", response_model=AnalyzeResponse)
-async def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeResponse:
-    """Submit a natural language question for analysis."""
-    graph = req.app.state.graph
+# ── Shared helpers ──────────────────────────────────────────────
 
-    conversation_id = request.conversation_id or str(uuid.uuid4())
-    thread_id = f"{conversation_id}-{uuid.uuid4().hex[:8]}"
-
-    config = {"configurable": {"thread_id": thread_id}}
-
-    initial_state = {
+def _build_initial_state(conversation_id: str, user_id: str, question: str) -> dict[str, Any]:
+    """Build the initial graph state dict for a new analysis."""
+    return {
         "conversation_id": conversation_id,
-        "user_id": request.user_id,
-        "messages": [{"role": "user", "content": request.question}],
+        "user_id": user_id,
+        "messages": [{"role": "user", "content": question}],
         "intent": None,
         "plan": None,
         "plan_approved": False,
@@ -81,6 +76,35 @@ async def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeResponse:
         "error": None,
         "error_node": None,
     }
+
+
+# Mapping from graph node names to user-friendly status messages
+_NODE_STATUS_MAP: dict[str, str] = {
+    "intent_classify": "🔍 Classifying your question...",
+    "context_retrieve": "📚 Retrieving schema context...",
+    "plan": "📋 Creating analysis plan...",
+    "hitl_approval": "✅ Checking approval...",
+    "sql_generate": "⚙️ Generating SQL query...",
+    "sql_validate": "🔎 Validating SQL...",
+    "sql_execute": "🚀 Executing query on ClickHouse...",
+    "analysis_sandbox": "📊 Analyzing results...",
+    "report_assemble": "📝 Assembling report...",
+    "final_response": "✨ Preparing response...",
+}
+
+
+# ── Non-streaming analyze endpoint ──────────────────────────────
+
+@router.post("/analyze", response_model=AnalyzeResponse)
+async def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeResponse:
+    """Submit a natural language question for analysis."""
+    graph = req.app.state.graph
+
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+    thread_id = f"{conversation_id}-{uuid.uuid4().hex[:8]}"
+    config = {"configurable": {"thread_id": thread_id}}
+
+    initial_state = _build_initial_state(conversation_id, request.user_id, request.question)
 
     try:
         result = await graph.ainvoke(initial_state, config)
@@ -111,20 +135,7 @@ async def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeResponse:
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# Mapping from graph node names to user-friendly status messages
-_NODE_STATUS_MAP = {
-    "intent_classify": "🔍 Classifying your question...",
-    "context_retrieve": "📚 Retrieving schema context...",
-    "plan": "📋 Creating analysis plan...",
-    "hitl_approval": "✅ Checking approval...",
-    "sql_generate": "⚙️ Generating SQL query...",
-    "sql_validate": "🔎 Validating SQL...",
-    "sql_execute": "🚀 Executing query on ClickHouse...",
-    "analysis_sandbox": "📊 Analyzing results...",
-    "report_assemble": "📝 Assembling report...",
-    "final_response": "✨ Preparing response...",
-}
-
+# ── Streaming analyze endpoint ──────────────────────────────────
 
 @router.post("/analyze/stream")
 async def analyze_stream(request: AnalyzeRequest, req: Request) -> StreamingResponse:
@@ -139,30 +150,7 @@ async def analyze_stream(request: AnalyzeRequest, req: Request) -> StreamingResp
     thread_id = f"{conversation_id}-{uuid.uuid4().hex[:8]}"
     config = {"configurable": {"thread_id": thread_id}}
 
-    initial_state = {
-        "conversation_id": conversation_id,
-        "user_id": request.user_id,
-        "messages": [{"role": "user", "content": request.question}],
-        "intent": None,
-        "plan": None,
-        "plan_approved": False,
-        "schema_context": "",
-        "historical_queries": [],
-        "generated_sql": None,
-        "sql_validation_errors": [],
-        "sql_retry_count": 0,
-        "graph_step_count": 0,
-        "query_result": None,
-        "execution_time_ms": None,
-        "analysis_summary": None,
-        "analysis_artifacts": [],
-        "report": None,
-        "total_llm_tokens": 0,
-        "estimated_cost_usd": 0.0,
-        "trace_id": str(uuid.uuid4()),
-        "error": None,
-        "error_node": None,
-    }
+    initial_state = _build_initial_state(conversation_id, request.user_id, request.question)
 
     async def _event_generator():
         try:
@@ -171,13 +159,12 @@ async def analyze_stream(request: AnalyzeRequest, req: Request) -> StreamingResp
                     status_msg = _NODE_STATUS_MAP.get(
                         node_name, f"Processing {node_name}..."
                     )
-                    # Emit a thinking/status event
                     status_event = {
                         "type": "status",
                         "node": node_name,
                         "message": status_msg,
                     }
-                    yield f"data: {_json.dumps(status_event)}\\n\\n"
+                    yield f"data: {_json.dumps(status_event)}\n\n"
 
             # Get final state
             final_state = await graph.aget_state(config)
@@ -192,11 +179,12 @@ async def analyze_stream(request: AnalyzeRequest, req: Request) -> StreamingResp
                 "thread_id": thread_id,
                 "status": "completed" if not values.get("error") else "error",
                 "intent": values.get("intent"),
+                "report": values.get("report"),
                 "response": last_msg,
                 "error": values.get("error"),
             }
-            yield f"data: {_json.dumps(result_event)}\\n\\n"
-            yield "data: [DONE]\\n\\n"
+            yield f"data: {_json.dumps(result_event)}\n\n"
+            yield "data: [DONE]\n\n"
         except Exception as exc:  # noqa: BLE001
             logger.error("Streaming analysis failed: %s", exc, exc_info=True)
             error_event = {
@@ -208,11 +196,13 @@ async def analyze_stream(request: AnalyzeRequest, req: Request) -> StreamingResp
                 "response": "",
                 "error": str(exc),
             }
-            yield f"data: {_json.dumps(error_event)}\\n\\n"
-            yield "data: [DONE]\\n\\n"
+            yield f"data: {_json.dumps(error_event)}\n\n"
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(_event_generator(), media_type="text/event-stream")
 
+
+# ── Plan approval endpoint ──────────────────────────────────────
 
 @router.post("/approve", response_model=AnalyzeResponse)
 async def approve(request: ApproveRequest, req: Request) -> AnalyzeResponse:
@@ -252,6 +242,8 @@ async def approve(request: ApproveRequest, req: Request) -> AnalyzeResponse:
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+# ── Thread state endpoint ───────────────────────────────────────
+
 @router.get("/threads/{thread_id}/state")
 async def get_thread_state(thread_id: str, req: Request) -> dict[str, Any]:
     """Get the current state of a conversation thread."""
@@ -270,6 +262,8 @@ async def get_thread_state(thread_id: str, req: Request) -> dict[str, Any]:
         logger.error("Failed to get thread state: %s", exc)
         raise HTTPException(status_code=404, detail=f"Thread not found: {thread_id}")
 
+
+# ── Report endpoints ────────────────────────────────────────────
 
 @router.get("/reports/{report_id}")
 async def list_report_artifacts(report_id: str) -> dict[str, Any]:
@@ -324,7 +318,6 @@ async def download_report_artifact(
             status_code=404, detail=f"Report artifact not found: {filename}"
         )
 
-    # Determine media type from extension
     media_types = {
         ".json": "application/json",
         ".csv": "text/csv",
