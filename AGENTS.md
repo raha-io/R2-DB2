@@ -14,18 +14,19 @@ Keep this file aligned with [`docs/final-architecture.md`](docs/final-architectu
 Single-agent analytical system that turns natural language questions into audited, reproducible reports backed by ClickHouse. A single LangGraph DAG orchestrates the entire pipeline — there is no secondary agent or fallback workflow. Deterministic orchestration, strict host/sandbox isolation, and audited execution.
 
 ## Single Agent Architecture
-- **One agent**: The LangGraph graph in [`src/r2-db2/graph/`](src/r2-db2/graph/) is the sole runtime orchestrator.
-- **No legacy agent**: The legacy core `Agent` class in [`src/r2-db2/core/agent/`](src/r2-db2/core/agent/) is retained as library code but is **not instantiated or used at runtime**.
+- **One agent**: The LangGraph graph in [`src/graph/`](src/graph/) is the sole runtime orchestrator.
+- **No legacy agent**: The legacy core `Agent` class in [`src/core/agent/`](src/core/agent/) is retained as library code but is **not instantiated or used at runtime**.
 - **No fallback**: API routes (OpenAI-compatible and graph-native) exclusively use the LangGraph graph. There is no agent fallback path.
-- **Entry points**: [`src/r2-db2/main.py`](src/r2-db2/main.py:1) builds the graph at startup and registers it on all route handlers.
+- **Entry points**: [`src/main.py`](src/main.py:1) builds the graph at startup and registers it on all route handlers.
 
 ## Repository Layout
-- [`src/r2-db2/graph/`](src/r2-db2/graph/): **LangGraph DAG** — builder, nodes, state. This is the runtime orchestrator.
-- [`src/r2-db2/core/`](src/r2-db2/core/): registry, validation, audit, recovery, observability, report service, and legacy agent/workflow (library code, not runtime).
-- [`src/r2-db2/capabilities/`](src/r2-db2/capabilities/): domain interfaces (sql_runner, agent_memory, file_system).
-- [`src/r2-db2/integrations/`](src/r2-db2/integrations/): concrete backends (clickhouse, qdrant, local, plotly, postgres).
-- [`src/r2-db2/servers/`](src/r2-db2/servers/): FastAPI route adapters (graph routes + OpenAI-compatible routes).
-- [`src/r2-db2/config/`](src/r2-db2/config/): settings and configuration.
+- [`src/graph/`](src/graph/): **LangGraph DAG** — builder, nodes, state. This is the runtime orchestrator.
+- [`src/report/`](src/report/): report models and output service.
+- [`src/integrations/`](src/integrations/): concrete backends (clickhouse, qdrant, local, plotly, postgres).
+- [`src/servers/`](src/servers/): FastAPI route adapters (graph routes + OpenAI-compatible routes).
+- [`src/settings.py`](src/settings.py): configuration.
+- [`src/errors.py`](src/errors.py): error types.
+- [`src/_compat.py`](src/_compat.py): compatibility layer.
 - [`docs/`](docs/): primary architecture: [`docs/final-architecture.md`](docs/final-architecture.md:1).
 
 ## Working Norms
@@ -72,7 +73,7 @@ Single-agent analytical system that turns natural language questions into audite
 - Nodes: `intent_classify`, `context_retrieve`, `plan`, `hitl_approval`, `sql_generate`, `sql_validate`, `sql_execute`, `analysis_sandbox`, `report_assemble`, `final_response`.
 - Routing: reject plan → `final_response`; off_topic/clarification → `final_response`; otherwise sequential; bounded retries on SQL validation/execution errors.
 - Global step guard prevents infinite loops (max 10 steps).
-- Graph built in [`build_graph()`](src/r2-db2/graph/builder.py:80) and compiled with checkpointer.
+- Graph built in [`build_graph()`](src/graph/builder.py:80) and compiled with checkpointer.
 
 ## State Design
 ```python
@@ -134,7 +135,7 @@ class SQLRunner(Protocol):
 ## Caching & Outputs
 - Cache SQL results and schema retrievals with TTL.
 - Default outputs: PDF + Plotly HTML + CSV/Parquet + JSON summary.
-- Report assembly via [`ReportOutputService`](src/r2-db2/core/report/service.py:1).
+- Report assembly via [`ReportOutputService`](src/report/service.py:1).
 
 ## Testing
 - Use pytest for unit tests on graph nodes, SQL validation, and report assembly.
@@ -154,7 +155,7 @@ uv run pytest tests/test_report_output.py -v
 uv run pytest tests/ --cov=r2-db2 --cov-report=term-missing
 ```
 
-The `pythonpath = ["src"]` setting in `pyproject.toml` ensures the `r2-db2` package is importable during tests without manual `PYTHONPATH` configuration.
+The `pythonpath = ["src"]` setting in `pyproject.toml` ensures the `src` package is importable during tests without manual `PYTHONPATH` configuration.
 
 ## Contribution Guidance
 - Keep this file and [`docs/final-architecture.md`](docs/final-architecture.md:1) in sync.
@@ -164,6 +165,5 @@ The `pythonpath = ["src"]` setting in `pyproject.toml` ensures the `r2-db2` pack
 ## Subfolder Agent Guides
 - [`docs/AGENTS.md`](docs/AGENTS.md): Documentation authoring and architecture-doc sync rules.
 - [`src/AGENTS.md`](src/AGENTS.md): Source-wide implementation and quality guardrails.
-- [`src/r2-db2/AGENTS.md`](src/r2-db2/AGENTS.md): Runtime architecture boundaries and module-level conventions.
 - [`tests/AGENTS.md`](tests/AGENTS.md): Test style and coverage expectations.
 - [`scripts/AGENTS.md`](scripts/AGENTS.md): Script safety and reproducibility rules.

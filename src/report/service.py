@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
-from r2-db2.core.report.models import OutputFormat, ReportArtifact, ReportOutput
+from report.models import OutputFormat, ReportArtifact, ReportOutput
 
 logger = logging.getLogger(__name__)
 

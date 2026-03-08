@@ -6,8 +6,8 @@ import asyncio
 import logging
 from typing import Any
 
-from r2-db2.config.settings import ClickHouseSettings
-from r2-db2.integrations.clickhouse.seed_generators import (
+from settings import ClickHouseSettings
+from .seed_generators import (
     generate_customers,
     generate_orders,
     generate_events,
@@ -15,8 +15,8 @@ from r2-db2.integrations.clickhouse.seed_generators import (
     NUM_ORDERS,
     NUM_EVENTS,
 )
-from r2-db2.integrations.clickhouse.seed_schema import ensure_database, ensure_tables
-from r2-db2.integrations.clickhouse.seed_insert import (
+from .seed_schema import ensure_database, ensure_tables
+from .seed_insert import (
     insert_customers,
     insert_orders,
     insert_events,

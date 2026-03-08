@@ -82,7 +82,7 @@ services:
         PUBLIC_IMAGE_REGISTRY: ${PUBLIC_IMAGE_REGISTRY}
         LOCAL_ARTIFACTORY_ADDRESS: ${LOCAL_ARTIFACTORY_ADDRESS}
         PIP_REPO_URL: ${PIP_REPO_URL}
-    command: ["python", "-c", "from r2-db2.integrations.clickhouse.seed import seed_clickhouse_sync; from r2-db2.config.settings import get_settings; seed_clickhouse_sync(get_settings().clickhouse)"]
+    command: ["python", "-c", "from integrations.clickhouse.seed import seed_clickhouse_sync; from config.settings import get_settings; seed_clickhouse_sync(get_settings().clickhouse)"]
     env_file:
       - .env
     environment:

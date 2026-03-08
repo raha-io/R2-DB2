@@ -41,7 +41,7 @@ dependencies = [
 ]
 
 [project.scripts]
-r2-db2 = "r2-db2.servers.cli.server_runner:main"
+r2-db2 = "main:main"
 
 
 [project.optional-dependencies]
@@ -57,9 +57,9 @@ report = [
 ]
 
 
-[tool.flit.module]
-name = "r2-db2"
-path = "src/r2-db2"
+# [tool.flit.module]
+# name = "r2-db2"
+# path = "src/r2-db2"
 
 [tool.flit.sdist]
 exclude = [

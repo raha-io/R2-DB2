@@ -8,8 +8,8 @@ from typing import Any
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from r2-db2.graph import nodes
-from r2-db2.graph.state import AnalyticalAgentState
+from graph import nodes
+from graph.state import AnalyticalAgentState
 
 logger = logging.getLogger(__name__)
 

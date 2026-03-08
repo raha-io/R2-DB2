@@ -9,9 +9,9 @@ from typing import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from r2-db2.config.settings import get_settings
-from r2-db2.graph.builder import build_graph
-from r2-db2.servers.fastapi.openai_routes import register_openai_routes
+from settings import get_settings
+from graph.builder import build_graph
+from servers.fastapi.openai_routes import register_openai_routes
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if settings.clickhouse.seed_on_startup:
         logger.info("Seeding ClickHouse with fake data...")
         try:
-            from r2-db2.integrations.clickhouse.seed import seed_clickhouse_sync
+            from integrations.clickhouse.seed import seed_clickhouse_sync
 
             seed_clickhouse_sync(settings.clickhouse)
             logger.info("ClickHouse seeding complete")
@@ -94,7 +94,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    from r2-db2.servers.fastapi.graph_routes import router as graph_router
+    from servers.fastapi.graph_routes import router as graph_router
 
     app.include_router(graph_router, prefix="/api/v1", tags=["graph"])
     # NOTE: OpenAI-compatible routes (/v1/...) are registered in the lifespan

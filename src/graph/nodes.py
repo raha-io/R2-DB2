@@ -12,11 +12,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.types import interrupt
 
-from r2-db2.config.settings import get_settings
-from r2-db2.core.report import OutputFormat, ReportOutputService
-from r2-db2.graph.state import AnalyticalAgentState
-from r2-db2.integrations.clickhouse.schema_catalog import get_schema_context
-from r2-db2.integrations.plotly.chart_generator import PlotlyChartGenerator
+from settings import get_settings
+from report import OutputFormat, ReportOutputService
+from graph.state import AnalyticalAgentState
+from integrations.clickhouse.schema_catalog import get_schema_context
+from integrations.plotly.chart_generator import PlotlyChartGenerator
 
 logger = logging.getLogger(__name__)
 

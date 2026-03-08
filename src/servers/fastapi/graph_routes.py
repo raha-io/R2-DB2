@@ -268,7 +268,7 @@ async def get_thread_state(thread_id: str, req: Request) -> dict[str, Any]:
 @router.get("/reports/{report_id}")
 async def list_report_artifacts(report_id: str) -> dict[str, Any]:
     """List all artifacts for a report."""
-    from r2-db2.config.settings import Settings
+    from settings import Settings
 
     settings = Settings()
     base_dir = Path(getattr(settings.report, "output_dir", "./reports"))
@@ -297,7 +297,7 @@ async def download_report_artifact(
     filename: str,
 ) -> FileResponse:
     """Download a generated report artifact file."""
-    from r2-db2.config.settings import Settings
+    from settings import Settings
 
     settings = Settings()
     base_dir = Path(getattr(settings.report, "output_dir", "./reports"))
