@@ -43,3 +43,30 @@
 | `pipe_r2_db2_analyst.py` | Pipe Function | Custom model routing to R2-DB2 backend |
 | `tool_download_report.py` | Tool | List and download report artifacts |
 | `tool_execute_sql.py` | Tool | Execute read-only SQL via R2-DB2 |
+
+## Quick Testing Checklist
+
+After installing the pipe and tools in Open WebUI:
+
+1. **Verify backend**: Open a terminal and run:
+   ```bash
+   curl http://localhost:8000/v1/models
+   ```
+   You should see a JSON response with model info.
+
+2. **Set pipe valve**: In Open WebUI Admin → Functions → pipe_r2_db2_analyst → Valves:
+   - `R2_DB2_API_BASE_URL`: `http://r2-db2-backend:8000` (no `/v1` suffix!)
+
+3. **Test basic query**: In Open WebUI chat, select the "R2-DB2 Analyst" model and type:
+   ```
+   How many customers do we have?
+   ```
+   You should see a text answer with the count.
+
+4. **Test report**: Type:
+   ```
+   Generate a report on sales trends
+   ```
+   You should see a summary with download links (📥).
+
+5. **If nothing appears**: Check backend logs with `docker compose logs r2-db2-backend`

@@ -1,29 +1,19 @@
-"""UI Component system for R2-DB2 Agents."""
+"""Rich UI components for the R2-DB2 Agents framework."""
 
-# Base component
-from .base import UiComponent
+# Base classes and enums - import from core
+from ...core.rich_component import RichComponent, ComponentType, ComponentLifecycle
 
-# Simple components
-from .simple import (
-    SimpleComponent,
-    SimpleComponentType,
-    SimpleTextComponent,
-    SimpleImageComponent,
-    SimpleLinkComponent,
-)
+# Text component
+from .text import RichTextComponent
 
-# Rich components - re-export all
-from .rich import (
-    # Base
-    RichComponent,
-    ComponentType,
-    ComponentLifecycle,
-    # Text
-    RichTextComponent,
-    # Data
+# Data components
+from .data import (
     DataFrameComponent,
     ChartComponent,
-    # Feedback
+)
+
+# Feedback components
+from .feedback import (
     NotificationComponent,
     StatusCardComponent,
     ProgressBarComponent,
@@ -33,7 +23,10 @@ from .rich import (
     LogEntry,
     BadgeComponent,
     IconTextComponent,
-    # Interactive
+)
+
+# Interactive components
+from .interactive import (
     TaskListComponent,
     Task,
     StatusBarUpdateComponent,
@@ -42,31 +35,29 @@ from .rich import (
     TaskOperation,
     ButtonComponent,
     ButtonGroupComponent,
-    # Containers
+)
+
+# Container components
+from .containers import (
     CardComponent,
-    # Specialized
+)
+
+# Specialized components
+from .specialized import (
     ArtifactComponent,
 )
 
 __all__ = [
     # Base
-    "UiComponent",
-    # Simple components
-    "SimpleComponent",
-    "SimpleComponentType",
-    "SimpleTextComponent",
-    "SimpleImageComponent",
-    "SimpleLinkComponent",
-    # Rich components - Base
     "RichComponent",
     "ComponentType",
     "ComponentLifecycle",
-    # Rich components - Text
+    # Text
     "RichTextComponent",
-    # Rich components - Data
+    # Data
     "DataFrameComponent",
     "ChartComponent",
-    # Rich components - Feedback
+    # Feedback
     "NotificationComponent",
     "StatusCardComponent",
     "ProgressBarComponent",
@@ -76,7 +67,7 @@ __all__ = [
     "LogEntry",
     "BadgeComponent",
     "IconTextComponent",
-    # Rich components - Interactive
+    # Interactive
     "TaskListComponent",
     "Task",
     "StatusBarUpdateComponent",
@@ -85,8 +76,8 @@ __all__ = [
     "TaskOperation",
     "ButtonComponent",
     "ButtonGroupComponent",
-    # Rich components - Containers
+    # Containers
     "CardComponent",
-    # Rich components - Specialized
+    # Specialized
     "ArtifactComponent",
 ]

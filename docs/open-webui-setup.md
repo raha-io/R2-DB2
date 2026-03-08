@@ -207,6 +207,115 @@ Key environment variables set on the `openwebui` service:
 2. Check that the base URL is `https://openrouter.ai/api/v1`
 3. Ensure the connection is enabled in Admin Panel → Settings → Connections
 
+## Testing from Open WebUI
+
+### Prerequisites Checklist
+
+Before testing, ensure:
+
+1. R2-DB2 backend is running (check: `curl http://localhost:8000/v1/models`)
+2. Open WebUI is running (default: http://localhost:3000)
+3. Pipe is installed in Open WebUI (Admin → Functions → pipe_r2_db2_analyst.py)
+4. Pipe valve `R2_DB2_API_BASE_URL` is set to `http://r2-db2-backend:8000` (or your backend URL, WITHOUT `/v1` suffix)
+
+### Test Scenarios
+
+#### Test 1: Basic Question (human-readable answer)
+
+**Prompt:**
+```
+How many customers do we have?
+```
+
+**Expected:** A text answer like "You have 1,234 customers in the database." with possibly a SQL query shown.
+
+**What to check:** You should see actual text content, not just a thinking spinner.
+
+---
+
+#### Test 2: Data Table Response
+
+**Prompt:**
+```
+Show me the top 10 customers by revenue
+```
+
+**Expected:** A markdown table with customer names and revenue figures.
+
+**What to check:** Table renders properly in the chat.
+
+---
+
+#### Test 3: Chart Generation
+
+**Prompt:**
+```
+Create a bar chart of monthly sales for the last 12 months
+```
+
+**Expected:** A chart description or link, plus a text summary of the data.
+
+**What to check:** Chart reference appears in the response.
+
+---
+
+#### Test 4: Report Generation (download link)
+
+**Prompt:**
+```
+Generate a full report on customer acquisition trends
+```
+
+**Expected:** A text summary plus download links for PDF/CSV/HTML artifacts.
+
+**What to check:** Download links are clickable (📥 icons).
+
+---
+
+#### Test 5: Clarification Question
+
+**Prompt:**
+```
+Show me the data
+```
+
+**Expected:** The agent should ask a clarifying question like "Could you specify which data you'd like to see?"
+
+**What to check:** Agent asks for more details instead of guessing.
+
+---
+
+#### Test 6: SQL Execution Tool (if installed)
+
+**Prompt:**
+```
+Execute this SQL: SELECT count(*) FROM customers
+```
+
+**Expected:** Query result with row count.
+
+**What to check:** The execute_sql tool runs and returns results.
+
+### Debugging Tips
+
+- **If you see only a thinking spinner with no response:**
+  1. Check backend logs: `docker compose logs r2-db2-backend`
+  2. Test the API directly: 
+     ```bash
+     curl -X POST http://localhost:8000/v1/chat/completions \
+       -H "Content-Type: application/json" \
+       -d '{"model":"r2-db2-analyst","messages":[{"role":"user","content":"How many customers?"}]}'
+     ```
+  3. Verify pipe valve URL does NOT end with `/v1` (the pipe adds this automatically)
+
+- **If you see "⚠️ No response received from the analytics backend":**
+  1. Backend may be unreachable - check network/docker networking
+  2. Check if backend URL is correct in pipe valves
+
+- **If you see "❌ Backend connection error":**
+  1. Backend is down or URL is wrong
+  2. Check: `curl http://localhost:8000/health` or `curl http://localhost:8000/v1/models`
+
 ## File Reference
 
 | File | Purpose |

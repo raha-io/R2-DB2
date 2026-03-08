@@ -8,6 +8,7 @@ license: MIT
 
 import json
 import logging
+import sys
 from typing import AsyncGenerator, Awaitable, Callable, Optional, Union
 
 import aiohttp
@@ -74,7 +75,13 @@ class Pipe:
             "stream": stream,
         }
 
-        url = f"{self.valves.R2_DB2_API_BASE_URL}/v1/chat/completions"
+        # Fix URL construction: strip trailing slash and handle /v1 suffix
+        base_url = self.valves.R2_DB2_API_BASE_URL.rstrip("/")
+        # Check if base_url already ends with /v1 before appending
+        if base_url.endswith("/v1"):
+            url = f"{base_url}/chat/completions"
+        else:
+            url = f"{base_url}/v1/chat/completions"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.valves.R2_DB2_API_KEY}",
@@ -93,14 +100,25 @@ class Pipe:
                 return self._stream_response(url, headers, payload, __event_emitter__)
             else:
                 return await self._non_stream_response(url, headers, payload, __event_emitter__)
-        except Exception as exc:
-            logger.exception("Pipe error calling R2-DB2 backend")
-            error_msg = f"❌ Error connecting to R2-DB2 backend: {exc}"
+        except aiohttp.ClientError as exc:
+            logger.exception("HTTP error calling R2-DB2 backend")
+            error_msg = f"❌ Backend connection error: {str(exc)}. Please verify the R2-DB2 backend is running at {base_url}"
             if __event_emitter__:
                 await __event_emitter__(
                     {
                         "type": "status",
-                        "data": {"description": error_msg, "done": True},
+                        "data": {"description": "Error connecting to backend", "done": True},
+                    }
+                )
+            return error_msg
+        except Exception as exc:
+            logger.exception("Unexpected error calling R2-DB2 backend")
+            error_msg = f"❌ Unexpected error: {str(exc)}"
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {"description": "Error connecting to backend", "done": True},
                     }
                 )
             return error_msg
@@ -122,6 +140,9 @@ class Pipe:
 
                 data = await resp.json()
                 content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+                if not content:
+                    return "⚠️ The analytics backend returned an empty response. Please try rephrasing your question or check backend logs."
 
                 if __event_emitter__:
                     await __event_emitter__(
@@ -150,6 +171,7 @@ class Pipe:
                     return
 
                 buffer = ""
+                content_received = False
                 async for line_bytes in resp.content:
                     line = line_bytes.decode("utf-8", errors="replace")
                     buffer += line
@@ -161,6 +183,8 @@ class Pipe:
                         if not sse_line:
                             continue
                         if sse_line == "data: [DONE]":
+                            if not content_received:
+                                yield "\n\n⚠️ No response received from the analytics backend. Please check the backend logs."
                             if __event_emitter__:
                                 await __event_emitter__(
                                     {
@@ -182,6 +206,8 @@ class Pipe:
                                     .get("content")
                                 )
                                 if delta:
+                                    content_received = True
                                     yield delta
-                            except json.JSONDecodeError:
+                            except json.JSONDecodeError as jde:
+                                print(f"JSON parse error: {jde} - Raw line: {json_str}", file=sys.stderr)
                                 continue
