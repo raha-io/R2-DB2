@@ -1,16 +1,8 @@
-"""
-Base server components for the R2-DB2 Agents framework.
+"""Base server models.
 
-This module provides framework-agnostic components for handling chat
-requests and responses.
+Legacy ChatHandler has been removed. Only base models remain for backward compatibility.
 """
 
-from .chat_handler import ChatHandler
-from .models import ChatRequest, ChatStreamChunk, ChatResponse
+from r2-db2.servers.base.models import ChatRequest, ChatResponse, ChatStreamChunk
 
-__all__ = [
-    "ChatHandler",
-    "ChatRequest",
-    "ChatStreamChunk",
-    "ChatResponse",
-]
+__all__ = ["ChatRequest", "ChatResponse", "ChatStreamChunk"]

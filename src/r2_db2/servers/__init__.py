@@ -1,14 +1,10 @@
+"""R2-DB2 server adapters.
+
+Runtime server is built via src/r2-db2/main.py using graph routes and OpenAI-compatible routes.
+Legacy chat handler and R2-DB2FastAPIServer have been removed.
 """
-Server implementations for the R2-DB2 Agents framework.
 
-This module provides FastAPI server factories for serving
-R2-DB2 agents over HTTP with SSE, WebSocket, and polling endpoints.
-"""
+from r2-db2.servers.fastapi.graph_routes import router as graph_router
+from r2-db2.servers.fastapi.openai_routes import register_openai_routes
 
-from .base import ChatHandler, ChatRequest, ChatStreamChunk
-
-__all__ = [
-    "ChatHandler",
-    "ChatRequest",
-    "ChatStreamChunk",
-]
+__all__ = ["graph_router", "register_openai_routes"]

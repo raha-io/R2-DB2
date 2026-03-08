@@ -2,7 +2,7 @@
 title: Download Report
 description: Tool to list and download generated reports (PDF, CSV, Parquet, JSON, Plotly HTML) from the R2-DB2 analytics backend.
 author: r2-db2-team
-version: 0.1.0
+version: 0.2.0
 license: MIT
 """
 
@@ -25,6 +25,10 @@ class Tools:
         R2_DB2_API_BASE_URL: str = Field(
             default="http://app:8000",
             description="Base URL of the R2-DB2 backend API.",
+        )
+        R2_DB2_API_KEY: str = Field(
+            default="sk-r2-db2-dev-key",
+            description="Bearer API key for the R2-DB2 backend API.",
         )
         REQUEST_TIMEOUT: int = Field(
             default=30,
@@ -57,12 +61,14 @@ class Tools:
                 }
             )
 
-        url = f"{self.valves.R2_DB2_API_BASE_URL}/reports/{report_id}"
+        base = self.valves.R2_DB2_API_BASE_URL.rstrip("/")
+        headers = {"Authorization": f"Bearer {self.valves.R2_DB2_API_KEY}"}
+        url = f"{base}/api/v1/reports/{report_id}"
         timeout = aiohttp.ClientTimeout(total=self.valves.REQUEST_TIMEOUT)
 
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url) as resp:
+                async with session.get(url, headers=headers) as resp:
                     if resp.status != 200:
                         error_text = await resp.text()
                         return f"❌ Error listing report files ({resp.status}): {error_text}"
@@ -79,13 +85,12 @@ class Tools:
                         "| File | Format | Size |",
                         "|------|--------|------|",
                     ]
-                    base = self.valves.R2_DB2_API_BASE_URL
                     for art in artifacts:
                         filename = art.get("filename", "unknown")
                         fmt = art.get("format", "unknown")
                         size = art.get("size_bytes", 0)
                         size_str = f"{size / 1024:.1f} KB" if size > 0 else "—"
-                        download_url = f"{base}/reports/{report_id}/{filename}"
+                        download_url = f"{base}/api/v1/reports/{report_id}/{filename}"
                         lines.append(f"| [{filename}]({download_url}) | {fmt} | {size_str} |")
 
                     lines.append(f"\n💡 **Tip**: Click a filename to download, or ask me to get a specific file.")
@@ -129,13 +134,15 @@ class Tools:
                 }
             )
 
-        download_url = f"{self.valves.R2_DB2_API_BASE_URL}/reports/{report_id}/{filename}"
+        base = self.valves.R2_DB2_API_BASE_URL.rstrip("/")
+        headers = {"Authorization": f"Bearer {self.valves.R2_DB2_API_KEY}"}
+        download_url = f"{base}/api/v1/reports/{report_id}/{filename}"
 
         # Verify the file exists
         timeout = aiohttp.ClientTimeout(total=self.valves.REQUEST_TIMEOUT)
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.head(download_url) as resp:
+                async with session.head(download_url, headers=headers) as resp:
                     if resp.status == 200:
                         content_type = resp.headers.get("content-type", "unknown")
                         result = (

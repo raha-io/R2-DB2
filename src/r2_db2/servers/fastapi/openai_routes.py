@@ -1,15 +1,13 @@
 """OpenAI-compatible API routes for Open WebUI integration."""
 from __future__ import annotations
 
-import json
 import logging
 import uuid
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
-from ..base import ChatHandler, ChatRequest
 from ..base.models import ChatStreamChunk
 from .openai_models import (
     ChatChoice,
@@ -476,16 +474,14 @@ logger = logging.getLogger(__name__)
 R2_DB2_MODEL_ID = "r2-db2-analyst"
 
 
-def register_openai_routes(app: FastAPI, agent, graph=None) -> None:
+def register_openai_routes(app: FastAPI, graph) -> None:
     """Register OpenAI-compatible /v1 routes on the FastAPI app.
     
     Args:
         app: The FastAPI application instance.
-        agent: The R2-DB2 agent instance.
+        graph: The LangGraph application instance.
     """
     router = APIRouter(prefix="/v1", tags=["openai-compat"])
-    chat_handler = ChatHandler(agent) if agent is not None else None
-    _graph = graph
 
     @router.get("/models")
     async def list_models():
@@ -523,87 +519,28 @@ def register_openai_routes(app: FastAPI, agent, graph=None) -> None:
                 ],
             )
 
-        # 2. Build internal ChatRequest
-        chat_req = ChatRequest(
-            message=user_message,
-            conversation_id=body.conversation_id or str(uuid.uuid4()),
-        )
+        # 2. Only graph-based handling is supported.
+        if graph is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Service unavailable: graph is not configured.",
+            )
 
         # 3. Branch: streaming vs non-streaming
         if body.stream:
-            # Prefer graph-based streaming with thinking indicators if graph is available
-            if _graph is not None:
-                return StreamingResponse(
-                    _stream_graph_response(_graph, user_message, body.model, body.conversation_id),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "X-Accel-Buffering": "no",
-                    },
-                )
-            if chat_handler is not None:
-                return StreamingResponse(
-                    _stream_response(chat_handler, chat_req, body.model),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "X-Accel-Buffering": "no",
-                    },
-                )
-            return ChatCompletionResponse(
-                model=body.model,
-                choices=[
-                    ChatChoice(message=ChatMessageResponse(content="Service unavailable: no graph or agent configured."))
-                ],
+            return StreamingResponse(
+                _stream_graph_response(graph, user_message, body.model, body.conversation_id),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
             )
         else:
-            # Prefer graph-based non-streaming if graph is available
-            if _graph is not None:
-                return await _non_stream_graph_response(_graph, user_message, body.model, body.conversation_id)
-            if chat_handler is not None:
-                return await _non_stream_response(chat_handler, chat_req, body.model)
-            return ChatCompletionResponse(
-                model=body.model,
-                choices=[
-                    ChatChoice(message=ChatMessageResponse(content="Service unavailable: no graph or agent configured."))
-                ],
-            )
+            return await _non_stream_graph_response(graph, user_message, body.model, body.conversation_id)
 
     app.include_router(router)
-
-
-async def _non_stream_response(
-    chat_handler: ChatHandler,
-    chat_req: ChatRequest,
-    model: str,
-) -> ChatCompletionResponse:
-    """Collect all chunks and return a single ChatCompletionResponse."""
-    parts: list[str] = []
-
-    try:
-        async for chunk in chat_handler.handle_stream(chat_req):
-            text = _chunk_to_text(chunk)
-            if text:
-                parts.append(text)
-    except Exception as exc:
-        logger.exception("Error during agent processing")
-        parts.append(f"Error: {exc}")
-
-    full_text = "\n".join(parts) if parts else "No response generated."
-
-    return ChatCompletionResponse(
-        model=model,
-        choices=[
-            ChatChoice(message=ChatMessageResponse(content=full_text))
-        ],
-        usage=UsageInfo(
-            prompt_tokens=0,
-            completion_tokens=len(full_text.split()),
-            total_tokens=len(full_text.split()),
-        ),
-    )
 
 
 async def _non_stream_graph_response(
@@ -663,71 +600,6 @@ async def _non_stream_graph_response(
             total_tokens=len(last_msg.split()),
         ),
     )
-
-
-async def _stream_response(
-    chat_handler: ChatHandler,
-    chat_req: ChatRequest,
-    model: str,
-) -> AsyncGenerator[str, None]:
-    """Yield OpenAI-format SSE chunks from the agent stream."""
-    completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-
-    # First chunk: send role
-    first_chunk = ChatCompletionChunk(
-        id=completion_id,
-        model=model,
-        choices=[
-            StreamChoice(
-                delta=DeltaContent(role="assistant", content=""),
-            )
-        ],
-    )
-    yield f"data: {first_chunk.model_dump_json()}\n\n"
-
-    # Stream content chunks
-    try:
-        async for chunk in chat_handler.handle_stream(chat_req):
-            text = _chunk_to_text(chunk)
-            # Skip chunks that produce empty text (status/progress indicators)
-            if text:
-                content_chunk = ChatCompletionChunk(
-                    id=completion_id,
-                    model=model,
-                    choices=[
-                        StreamChoice(
-                            delta=DeltaContent(content=text + "\n"),
-                        )
-                    ],
-                )
-                yield f"data: {content_chunk.model_dump_json()}\n\n"
-    except Exception as exc:
-        logger.exception("Error during streaming")
-        error_chunk = ChatCompletionChunk(
-            id=completion_id,
-            model=model,
-            choices=[
-                StreamChoice(
-                    delta=DeltaContent(content=f"\n\nError: {exc}"),
-                )
-            ],
-        )
-        yield f"data: {error_chunk.model_dump_json()}\n\n"
-    finally:
-        # Final chunk and terminal SSE marker should always be sent,
-        # even when streaming raises an exception.
-        done_chunk = ChatCompletionChunk(
-            id=completion_id,
-            model=model,
-            choices=[
-                StreamChoice(
-                    delta=DeltaContent(),
-                    finish_reason="stop",
-                )
-            ],
-        )
-        yield f"data: {done_chunk.model_dump_json()}\n\n"
-        yield "data: [DONE]\n\n"
 
 
 # Mapping from graph node names to user-friendly thinking messages

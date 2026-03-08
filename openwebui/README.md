@@ -1,72 +1,86 @@
 # Open WebUI Extensions for R2-DB2 Analytics
 
 ## Architecture
-- **General Chat Models**: Open WebUI connects to OpenRouter (or any OpenAI-compatible API) for GPT-4, Claude, etc.
-- **R2-DB2 Analyst Model**: A Pipe function that appears as an additional model in the selector. Routes to the R2-DB2 backend API independently.
-- **Tools**: Report download and SQL execution tools that work with the R2-DB2 Analyst.
 
-## Setup Steps
+The R2-DB2 backend runs a single LangGraph DAG that orchestrates the entire analytical pipeline. These Open WebUI extensions connect to it via two API surfaces:
 
-### 1. Configure OpenRouter (General Models)
-1. Log in as admin at `http://localhost:3000`
-2. Go to **Admin Panel → Settings → Connections**
-3. Under "OpenAI API", set:
-   - Base URL: `https://openrouter.ai/api/v1`
-   - API Key: Your OpenRouter API key
-4. Click Save
+- **Graph-native API** (primary, default): `POST /api/v1/analyze`, `POST /api/v1/analyze/stream`, `POST /api/v1/approve`
+- **OpenAI-compatible API** (fallback): `POST /v1/chat/completions`, `GET /v1/models`
+
+Both are backed by the same LangGraph graph — there is no legacy agent or fallback workflow.
+
+## Files
+
+| File | Type | Version | Description |
+|------|------|---------|-------------|
+| `pipe_r2_db2_analyst.py` | Pipe Function | 0.2.0 | Custom model routing to R2-DB2 backend (graph-native + OpenAI-compatible) |
+| `tool_download_report.py` | Tool | 0.2.0 | List and download report artifacts (PDF, CSV, Parquet, HTML, JSON) |
+| `tool_execute_sql.py` | Tool | 0.2.0 | Execute read-only SQL queries via the graph-native API |
+
+## Setup
+
+### 1. Verify Backend is Running
+
+```bash
+curl http://localhost:8000/health
+# Expected: {"status": "ok", "environment": "..."}
+
+curl http://localhost:8000/v1/models
+# Expected: JSON with model info
+```
 
 ### 2. Upload R2-DB2 Analyst Pipe
+
 1. Go to **Admin Panel → Functions**
 2. Click "+" or "Import"
 3. Copy-paste the contents of `pipe_r2_db2_analyst.py`
 4. Save the function
-5. Click the gear icon on the function → Set Valves:
-   - `R2_DB2_API_BASE_URL`: `http://app:8000/v1` (default, works inside Docker)
+5. Click the gear icon → Set Valves:
+   - `R2_DB2_API_BASE_URL`: `http://app:8000` (Docker) or `http://localhost:8000` (local)
+   - `R2_DB2_API_KEY`: Your API key (default: `sk-r2-db2-dev-key`)
    - `R2_DB2_MODEL_ID`: `r2-db2-analyst`
+   - `USE_GRAPH_API`: `True` (recommended) — uses graph-native endpoints
 6. Enable the function (toggle on)
 
 ### 3. Upload Tools (Optional)
+
 1. Go to **Admin Panel → Tools**
-2. Import `tool_download_report.py` — for downloading PDF/CSV/Parquet reports
+2. Import `tool_download_report.py` — for listing/downloading PDF, CSV, Parquet reports
 3. Import `tool_execute_sql.py` — for running read-only SQL queries
 
+Set tool valves:
+- `R2_DB2_API_BASE_URL`: same as pipe valve
+- `R2_DB2_API_KEY`: same as pipe valve
+
 ### 4. Using the Agent
+
 1. Start a new chat
-2. Select "R2-DB2 Analyst" from the model dropdown (alongside GPT-4, Claude, etc.)
+2. Select **"R2-DB2 Analytics Agent"** from the model dropdown
 3. Ask data questions like "Show me monthly revenue trends"
-4. The agent will generate SQL, execute it, and show charts/tables
-5. Ask follow-up questions to refine the analysis
+4. The agent will:
+   - Classify your intent
+   - Retrieve schema context
+   - Generate and validate SQL
+   - Execute the query
+   - Generate charts and reports
+5. Download reports (PDF, CSV) via the provided links
 
-## Files
-| File | Type | Description |
-|------|------|-------------|
-| `pipe_r2_db2_analyst.py` | Pipe Function | Custom model routing to R2-DB2 backend |
-| `tool_download_report.py` | Tool | List and download report artifacts |
-| `tool_execute_sql.py` | Tool | Execute read-only SQL via R2-DB2 |
+## API Endpoints Used
 
-## Quick Testing Checklist
+| Endpoint | Method | Used By | Purpose |
+|----------|--------|---------|---------|
+| `/api/v1/analyze` | POST | Pipe, SQL Tool | Submit analysis question |
+| `/api/v1/analyze/stream` | POST | Pipe (streaming) | Stream analysis progress |
+| `/api/v1/approve` | POST | Pipe (HITL) | Approve/reject analysis plan |
+| `/api/v1/reports/{id}` | GET | Report Tool | List report artifacts |
+| `/api/v1/reports/{id}/{file}` | GET | Report Tool | Download report file |
+| `/v1/chat/completions` | POST | Pipe (fallback) | OpenAI-compatible chat |
+| `/v1/models` | GET | — | List available models |
+| `/health` | GET | — | Health check |
 
-After installing the pipe and tools in Open WebUI:
+## Troubleshooting
 
-1. **Verify backend**: Open a terminal and run:
-   ```bash
-   curl http://localhost:8000/v1/models
-   ```
-   You should see a JSON response with model info.
-
-2. **Set pipe valve**: In Open WebUI Admin → Functions → pipe_r2_db2_analyst → Valves:
-   - `R2_DB2_API_BASE_URL`: `http://r2-db2-backend:8000` (no `/v1` suffix!)
-
-3. **Test basic query**: In Open WebUI chat, select the "R2-DB2 Analyst" model and type:
-   ```
-   How many customers do we have?
-   ```
-   You should see a text answer with the count.
-
-4. **Test report**: Type:
-   ```
-   Generate a report on sales trends
-   ```
-   You should see a summary with download links (📥).
-
-5. **If nothing appears**: Check backend logs with `docker compose logs r2-db2-backend`
+1. **No response**: Check backend logs with `docker compose logs r2-db2-backend`
+2. **Connection refused**: Verify `R2_DB2_API_BASE_URL` matches your deployment (Docker service name vs localhost)
+3. **Empty results**: The backend may need schema context loaded — check ClickHouse connection
+4. **Timeout**: Increase `REQUEST_TIMEOUT` valve (default: 300s for pipe, 120s for SQL tool)

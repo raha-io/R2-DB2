@@ -2,11 +2,10 @@
 title: Execute SQL Query
 description: Tool to execute read-only SQL queries against ClickHouse via the R2-DB2 analytics backend and display results as markdown tables.
 author: r2-db2-team
-version: 0.1.0
+version: 0.2.0
 license: MIT
 """
 
-import json
 import logging
 from typing import Awaitable, Callable, Optional
 
@@ -25,6 +24,10 @@ class Tools:
         R2_DB2_API_BASE_URL: str = Field(
             default="http://app:8000",
             description="Base URL of the R2-DB2 backend API.",
+        )
+        R2_DB2_API_KEY: str = Field(
+            default="sk-r2-db2-dev-key",
+            description="API key used for Authorization header when calling R2-DB2 backend.",
         )
         REQUEST_TIMEOUT: int = Field(
             default=120,
@@ -69,20 +72,14 @@ class Tools:
             if sql_upper.startswith(keyword):
                 return f"❌ **Rejected**: `{keyword}` statements are not allowed. Only SELECT queries are permitted."
 
-        # Call the R2-DB2 backend chat API with the SQL query
-        # We send it as a user message asking to execute the SQL
-        url = f"{self.valves.R2_DB2_API_BASE_URL}/v1/chat/completions"
+        # Call the R2-DB2 graph-native API with the SQL query.
+        base_url = self.valves.R2_DB2_API_BASE_URL.rstrip("/")
+        url = f"{base_url}/api/v1/analyze"
         timeout = aiohttp.ClientTimeout(total=self.valves.REQUEST_TIMEOUT)
 
         payload = {
-            "model": "r2-db2-analyst",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": f"Execute this SQL query and show the results:\n```sql\n{sql_query}\n```",
-                }
-            ],
-            "stream": False,
+            "question": f"Execute this SQL query and show the results:\n```sql\n{sql_query}\n```",
+            "user_id": "openwebui-tool",
         }
 
         try:
@@ -90,14 +87,22 @@ class Tools:
                 async with session.post(
                     url,
                     json=payload,
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self.valves.R2_DB2_API_KEY}",
+                    },
                 ) as resp:
                     if resp.status != 200:
                         error_text = await resp.text()
                         return f"❌ API error ({resp.status}): {error_text}"
 
                     data = await resp.json()
-                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    status = data.get("status")
+                    if status != "completed":
+                        error = data.get("error") or f"Request status is '{status}'"
+                        return f"❌ Query execution failed: {error}"
+
+                    content = data.get("response", "")
 
                     if not content:
                         content = "No results returned."
