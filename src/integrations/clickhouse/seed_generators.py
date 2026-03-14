@@ -73,6 +73,33 @@ DEVICE_TYPES = ["desktop", "mobile", "tablet"]
 
 PRODUCT_CATEGORIES = ["alpha", "bravo", "charlie"]
 
+CUSTOMER_TIERS = ["free", "basic", "premium", "enterprise"]
+
+GENDERS = ["male", "female", "other"]
+
+PAGE_URLS = [
+    "/",
+    "/pricing",
+    "/docs",
+    "/blog",
+    "/features",
+    "/checkout",
+    "/support",
+]
+
+BROWSERS = ["Chrome", "Safari", "Firefox", "Edge", "Opera"]
+
+
+def validate_required_seed_constants() -> None:
+    required_constants: tuple[str, ...] = ("GENDERS", "PAGE_URLS", "BROWSERS")
+    missing = [name for name in required_constants if name not in globals()]
+    if missing:
+        logger.error("Seed generator missing constants: %s", ", ".join(missing))
+        raise NameError(
+            "Missing required constants in seed_generators.py: "
+            + ", ".join(missing)
+        )
+
 
 def faker_instance() -> Faker:
     faker = Faker()
@@ -140,6 +167,7 @@ def decimal_quantize(value: float, places: str) -> Decimal:
 
 
 def generate_customers(count: int) -> list[dict[str, Any]]:
+    validate_required_seed_constants()
     faker = faker_instance()
     rng = random_instance()
     start_date, end_date = date_range()
@@ -231,6 +259,7 @@ def generate_orders(count: int) -> list[dict[str, Any]]:
 
 
 def generate_events(count: int) -> list[dict[str, Any]]:
+    validate_required_seed_constants()
     faker = faker_instance()
     rng = random_instance()
     events: list[dict[str, Any]] = []
@@ -295,6 +324,9 @@ __all__ = [
     "EVENT_TYPES",
     "DEVICE_TYPES",
     "PRODUCT_CATEGORIES",
+    "GENDERS",
+    "PAGE_URLS",
+    "BROWSERS",
     "RegionInfo",
     "faker_instance",
     "random_instance",
