@@ -115,18 +115,12 @@ def register_openai_routes(app: FastAPI, graph) -> None:
     async def chat_completions(request: Request, body: ChatCompletionRequest):
         """POST /v1/chat/completions — OpenAI-compatible chat endpoint.
 
-        Translates OpenAI messages to a graph invocation and returns
-        OpenAI-formatted response.
+        Translates OpenAI messages to a graph invocation. If the underlying
+        LangGraph paused for a clarification interrupt on a previous turn,
+        this turn's user message is forwarded as the resume payload.
         """
-        # Extract ALL user messages from OpenAI messages and join them
-        user_messages: list[str] = []
-        for msg in body.messages:
-            if msg.role == "user" and msg.content:
-                user_messages.append(msg.content)
-
-        user_message = "\n".join(user_messages)
-
-        if not user_message:
+        last_user, prior_messages = _split_user_messages(body)
+        if not last_user:
             return ChatCompletionResponse(
                 model=body.model,
                 choices=[
@@ -142,9 +136,13 @@ def register_openai_routes(app: FastAPI, graph) -> None:
                 detail="Service unavailable: graph is not configured.",
             )
 
+        conversation_key = _conversation_key(body, prior_messages)
+
         if body.stream:
             return StreamingResponse(
-                _stream_graph_response(graph, user_message, body.model, body.conversation_id),
+                _stream_graph_response(
+                    graph, last_user, body.model, conversation_key
+                ),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -152,31 +150,64 @@ def register_openai_routes(app: FastAPI, graph) -> None:
                     "X-Accel-Buffering": "no",
                 },
             )
-        else:
-            return await _non_stream_graph_response(
-                graph, user_message, body.model, body.conversation_id
-            )
+        return await _non_stream_graph_response(
+            graph, last_user, body.model, conversation_key
+        )
 
     app.include_router(router)
+
+
+async def _resolve_invocation(
+    graph, user_message: str, conversation_key: str
+) -> tuple[dict[str, Any], Any]:
+    """Pick resume vs fresh invocation and return ``(config, payload)``.
+
+    ``payload`` is either an initial state dict (fresh run) or a
+    ``langgraph.types.Command`` resuming a paused interrupt.
+    """
+    from langgraph.types import Command
+
+    existing_thread = _THREAD_BY_CONVERSATION.get(conversation_key)
+    if existing_thread:
+        config = {"configurable": {"thread_id": existing_thread}}
+        try:
+            state = await graph.aget_state(config)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to load thread %s, starting fresh: %s", existing_thread, exc)
+            state = None
+        if state and state.next and _extract_pending_interrupt(state):
+            logger.info("Resuming paused thread %s with user reply", existing_thread)
+            return config, Command(resume=user_message)
+
+    thread_id = f"{conversation_key}-{uuid.uuid4().hex[:8]}"
+    _THREAD_BY_CONVERSATION[conversation_key] = thread_id
+    config = {"configurable": {"thread_id": thread_id}}
+    return config, _build_initial_state(conversation_key, user_message)
+
+
+async def _final_message_from_state(graph, config: dict[str, Any]) -> str:
+    """Read the assistant message to send back, including clarification text."""
+    state = await graph.aget_state(config)
+    if state.next:
+        payload = _extract_pending_interrupt(state)
+        if payload and payload.get("type") == "clarification":
+            return _format_clarification(payload)
+    values = dict(state.values) if state.values else {}
+    messages = values.get("messages", [])
+    return messages[-1].get("content", "") if messages else ""
 
 
 async def _non_stream_graph_response(
     graph,
     user_message: str,
     model: str,
-    conversation_id: str | None = None,
+    conversation_key: str,
 ) -> ChatCompletionResponse:
     """Run the graph to completion and return a single ChatCompletionResponse."""
-    conv_id = conversation_id or str(uuid.uuid4())
-    thread_id = f"{conv_id}-{uuid.uuid4().hex[:8]}"
-    config = {"configurable": {"thread_id": thread_id}}
-
-    initial_state = _build_initial_state(conv_id, user_message)
-
     try:
-        result = await graph.ainvoke(initial_state, config)
-        messages = result.get("messages", [])
-        last_msg = messages[-1].get("content", "") if messages else "No response generated."
+        config, payload = await _resolve_invocation(graph, user_message, conversation_key)
+        await graph.ainvoke(payload, config)
+        last_msg = await _final_message_from_state(graph, config) or "No response generated."
     except Exception as exc:
         logger.exception("Error during graph processing")
         last_msg = f"Error: {exc}"
@@ -213,15 +244,10 @@ async def _stream_graph_response(
     graph,
     user_message: str,
     model: str,
-    conversation_id: str | None = None,
+    conversation_key: str,
 ) -> AsyncGenerator[str, None]:
     """Stream OpenAI-format SSE chunks using the LangGraph with thinking indicators."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-    conv_id = conversation_id or str(uuid.uuid4())
-    thread_id = f"{conv_id}-{uuid.uuid4().hex[:8]}"
-    config = {"configurable": {"thread_id": thread_id}}
-
-    initial_state = _build_initial_state(conv_id, user_message)
 
     # First chunk: send role
     first_chunk = ChatCompletionChunk(
@@ -236,7 +262,9 @@ async def _stream_graph_response(
     yield f"data: {first_chunk.model_dump_json()}\n\n"
 
     try:
-        async for event in graph.astream(initial_state, config, stream_mode="updates"):
+        config, payload = await _resolve_invocation(graph, user_message, conversation_key)
+
+        async for event in graph.astream(payload, config, stream_mode="updates"):
             for node_name, _node_output in event.items():
                 thinking_msg = _NODE_THINKING_MAP.get(node_name, "")
                 if thinking_msg:
@@ -251,12 +279,7 @@ async def _stream_graph_response(
                     )
                     yield f"data: {thinking_chunk.model_dump_json()}\n\n"
 
-        # Get final state and emit the actual response
-        final_state = await graph.aget_state(config)
-        values = dict(final_state.values) if final_state.values else {}
-
-        messages = values.get("messages", [])
-        last_msg = messages[-1].get("content", "") if messages else ""
+        last_msg = await _final_message_from_state(graph, config)
 
         if last_msg:
             content_chunk = ChatCompletionChunk(
