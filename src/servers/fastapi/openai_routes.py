@@ -1,6 +1,7 @@
 """OpenAI-compatible API routes for Open WebUI integration."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from typing import Any, AsyncGenerator
@@ -24,6 +25,72 @@ from .openai_models import (
 logger = logging.getLogger(__name__)
 
 R2_DB2_MODEL_ID = "r2-db2-analyst"
+
+# Maps a stable conversation key (client conversation_id, or a hash of the
+# prior message history when none is provided) to a LangGraph thread_id so
+# follow-up turns from OpenWebUI can resume an interrupted graph instead of
+# starting fresh. The graph itself persists everything via its checkpointer;
+# this dict only holds the lookup key.
+_THREAD_BY_CONVERSATION: dict[str, str] = {}
+
+
+def _conversation_key(body: ChatCompletionRequest, prior_messages: list[str]) -> str:
+    """Return a stable key identifying this conversation across turns.
+
+    Prefers an explicit ``conversation_id`` from the client. Falls back to a
+    hash of the prior assistant/user transcript so OpenWebUI (which always
+    resends the full history) can be matched turn-to-turn even when it does
+    not provide a conversation id.
+    """
+    if body.conversation_id:
+        return body.conversation_id
+    if not prior_messages:
+        return str(uuid.uuid4())
+    digest = hashlib.sha1("\n".join(prior_messages).encode("utf-8")).hexdigest()
+    return f"hash-{digest[:16]}"
+
+
+def _split_user_messages(body: ChatCompletionRequest) -> tuple[str, list[str]]:
+    """Return (last_user_message, prior_message_transcript)."""
+    user_messages: list[str] = []
+    prior_lines: list[str] = []
+    for msg in body.messages:
+        if msg.role == "user" and msg.content:
+            user_messages.append(msg.content)
+        if msg.content:
+            prior_lines.append(f"{msg.role}: {msg.content}")
+    last_user = user_messages[-1] if user_messages else ""
+    # Drop the trailing user line from the prior transcript so the hash is
+    # stable across the request that introduced it and the next request.
+    if prior_lines and last_user:
+        prior_lines = prior_lines[:-1]
+    return last_user, prior_lines
+
+
+def _extract_pending_interrupt(state: Any) -> dict[str, Any] | None:
+    """Pull the first interrupt payload from a paused graph state."""
+    interrupts = getattr(state, "interrupts", None) or []
+    for itr in interrupts:
+        value = getattr(itr, "value", None)
+        if isinstance(value, dict):
+            return value
+    tasks = getattr(state, "tasks", None) or []
+    for task in tasks:
+        for itr in getattr(task, "interrupts", []) or []:
+            value = getattr(itr, "value", None)
+            if isinstance(value, dict):
+                return value
+    return None
+
+
+def _format_clarification(payload: dict[str, Any]) -> str:
+    """Render an intent-agent clarification interrupt as an assistant message."""
+    question = payload.get("question") or "I need a bit more detail to answer this accurately."
+    ambiguities = payload.get("ambiguities") or []
+    if not ambiguities:
+        return question
+    bullets = "\n".join(f"- {item}" for item in ambiguities)
+    return f"{question}\n\n{bullets}"
 
 
 def register_openai_routes(app: FastAPI, graph) -> None:
