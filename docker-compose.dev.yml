@@ -18,10 +18,10 @@
 services:
   # ── Application ──
   app:
+    network_mode: host
     build:
       context: .
       dockerfile: Dockerfile
-      network: host
       args:
         PUBLIC_IMAGE_REGISTRY: ${PUBLIC_IMAGE_REGISTRY}
         LOCAL_ARTIFACTORY_ADDRESS: ${LOCAL_ARTIFACTORY_ADDRESS}
@@ -32,10 +32,10 @@ services:
       - .env
     environment:
       # With bridge networking, use service names
-      CLICKHOUSE__HOST: clickhouse
-      POSTGRES__HOST: postgres
-      REDIS__HOST: redis
-      QDRANT__HOST: qdrant
+      CLICKHOUSE__HOST: 127.0.0.1
+      POSTGRES__HOST: 127.0.0.1
+      REDIS__HOST: 127.0.0.1
+      QDRANT__HOST: 127.0.0.1
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -48,8 +48,6 @@ services:
     volumes:
       - ./artifacts:/app/artifacts
     restart: unless-stopped
-    networks:
-      - r2-db2-net
 
   # ── ClickHouse ──
   clickhouse:
@@ -63,37 +61,47 @@ services:
       - clickhouse-data:/var/lib/clickhouse
       - clickhouse-logs:/var/log/clickhouse-server
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--host", "127.0.0.1", "--query", "SELECT 1"]
+      test:
+        [
+          "CMD",
+          "clickhouse-client",
+          "--host",
+          "127.0.0.1",
+          "--query",
+          "SELECT 1",
+        ]
       interval: 10s
       timeout: 10s
       retries: 10
       start_period: 30s
     restart: unless-stopped
-    networks:
-      - r2-db2-net
+    network_mode: host
 
   # ── ClickHouse Init (one-shot seeder) ──
   clickhouse-init:
     build:
       context: .
       dockerfile: Dockerfile
-      network: host
       args:
         PUBLIC_IMAGE_REGISTRY: ${PUBLIC_IMAGE_REGISTRY}
         LOCAL_ARTIFACTORY_ADDRESS: ${LOCAL_ARTIFACTORY_ADDRESS}
         PIP_REPO_URL: ${PIP_REPO_URL}
-    command: ["python", "-c", "from integrations.clickhouse.seed import seed_clickhouse_sync; from settings import get_settings; seed_clickhouse_sync(get_settings().clickhouse)"]
+    command:
+      [
+        "python",
+        "-c",
+        "from integrations.clickhouse.seed import seed_clickhouse_sync; from settings import get_settings; seed_clickhouse_sync(get_settings().clickhouse)",
+      ]
     env_file:
       - .env
     environment:
       # With bridge networking, use service name
-      CLICKHOUSE__HOST: clickhouse
+      CLICKHOUSE__HOST: 127.0.0.1
     depends_on:
       clickhouse:
         condition: service_healthy
     restart: "no"
-    networks:
-      - r2-db2-net
+    network_mode: host
 
   # ── PostgreSQL (LangGraph checkpointer) ──
   postgres:
@@ -111,8 +119,7 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
-    networks:
-      - r2-db2-net
+    network_mode: host
 
   # ── Redis (caching) ──
   redis:
@@ -125,8 +132,7 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
-    networks:
-      - r2-db2-net
+    network_mode: host
 
   # ── Qdrant (semantic search) ──
   qdrant:
@@ -140,8 +146,7 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
-    networks:
-      - r2-db2-net
+    network_mode: host
 
   # ── Open WebUI ──
   openwebui:
@@ -150,8 +155,7 @@ services:
       - "3000:8080"
     volumes:
       - open-webui:/app/backend/data
-    networks:
-      - r2-db2-net
+    network_mode: host
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
@@ -175,10 +179,6 @@ services:
     depends_on:
       app:
         condition: service_healthy
-
-networks:
-  r2-db2-net:
-    driver: bridge
 
 volumes:
   clickhouse-data:

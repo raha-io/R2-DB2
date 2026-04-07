@@ -22,6 +22,8 @@ class AnalyticalAgentState(TypedDict, total=False):
 
     # Intent classification
     intent: Literal["new_analysis", "follow_up", "clarification", "off_topic"] | None
+    intent_spec: dict[str, Any] | None
+    intent_clarification_rounds: int
 
     # Planning
     plan: dict[str, Any] | None
@@ -36,6 +38,8 @@ class AnalyticalAgentState(TypedDict, total=False):
     sql_validation_errors: list[str]
     sql_retry_count: int
     graph_step_count: int  # Global step counter to prevent infinite loops
+    sql_review_pass: bool
+    sql_review_attempts: int
     query_result: dict[str, Any] | None
     execution_time_ms: int | None
 

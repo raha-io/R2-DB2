@@ -129,14 +129,14 @@ async def _non_stream_graph_response(
 
 # Mapping from graph node names to user-friendly thinking messages
 _NODE_THINKING_MAP: dict[str, str] = {
-    "intent_classify": "🔍 Understanding your question...\n\n",
+    "intent_agent": "🔍 Understanding your question...\n\n",
     "context_retrieve": "📚 Loading database schema...\n\n",
     "plan": "📋 Creating analysis plan...\n\n",
     "hitl_approval": "",
-    "sql_generate": "⚙️ Writing SQL query...\n\n",
+    "sql_agent": "⚙️ Writing SQL query...\n\n",
     "sql_validate": "🔎 Validating SQL...\n\n",
     "sql_execute": "🚀 Running query on ClickHouse...\n\n",
-    "analysis_sandbox": "📊 Analyzing results...\n\n",
+    "analysis_agent": "📊 Analyzing results...\n\n",
     "report_assemble": "📝 Building report...\n\n",
     "final_response": "",
 }
@@ -237,6 +237,8 @@ def _build_initial_state(conversation_id: str, user_message: str) -> dict[str, A
         "user_id": "anonymous",
         "messages": [{"role": "user", "content": user_message}],
         "intent": None,
+        "intent_spec": None,
+        "intent_clarification_rounds": 0,
         "plan": None,
         "plan_approved": False,
         "schema_context": "",

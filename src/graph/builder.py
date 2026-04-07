@@ -9,6 +9,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from graph import nodes
+from graph.agents import build_analysis_agent, build_intent_agent, build_sql_agent
 from graph.state import AnalyticalAgentState
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ def _route_after_intent(state: AnalyticalAgentState) -> str:
 def _route_after_hitl(state: AnalyticalAgentState) -> str:
     """Route based on HITL approval decision."""
     if state.get("plan_approved"):
-        return "sql_generate"
+        return "sql_agent"
     return "final_response"
 
 
@@ -56,7 +57,7 @@ def _route_after_sql_validate(state: AnalyticalAgentState) -> str:
     if not errors:
         return "sql_execute"
     if retry_count < MAX_SQL_RETRIES:
-        return "sql_generate"
+        return "sql_agent"
     return "final_response"
 
 
@@ -72,9 +73,9 @@ def _route_after_sql_execute(state: AnalyticalAgentState) -> str:
     if state.get("error") and state.get("error_node") == "sql_execute":
         retry_count = state.get("sql_retry_count", 0)
         if retry_count < MAX_SQL_RETRIES:
-            return "sql_generate"
+            return "sql_agent"
         return "final_response"
-    return "analysis_sandbox"
+    return "analysis_agent"
 
 
 def build_graph(checkpointer: Any | None = None, hitl_enabled: bool = False) -> Any:
@@ -90,21 +91,25 @@ def build_graph(checkpointer: Any | None = None, hitl_enabled: bool = False) -> 
     """
     builder = StateGraph(AnalyticalAgentState)
 
-    builder.add_node("intent_classify", nodes.intent_classify)
+    intent_agent = build_intent_agent()
+    sql_agent = build_sql_agent()
+    analysis_agent = build_analysis_agent()
+
+    builder.add_node("intent_agent", intent_agent)
     builder.add_node("context_retrieve", nodes.context_retrieve)
     builder.add_node("plan", nodes.plan)
     builder.add_node("hitl_approval", nodes.hitl_approval)
-    builder.add_node("sql_generate", nodes.sql_generate)
+    builder.add_node("sql_agent", sql_agent)
     builder.add_node("sql_validate", nodes.sql_validate)
     builder.add_node("sql_execute", nodes.sql_execute)
-    builder.add_node("analysis_sandbox", nodes.analysis_sandbox)
+    builder.add_node("analysis_agent", analysis_agent)
     builder.add_node("report_assemble", nodes.report_assemble)
     builder.add_node("final_response", nodes.final_response)
 
-    builder.add_edge(START, "intent_classify")
+    builder.add_edge(START, "intent_agent")
 
     builder.add_conditional_edges(
-        "intent_classify",
+        "intent_agent",
         _route_after_intent,
         {
             "context_retrieve": "context_retrieve",
@@ -119,19 +124,19 @@ def build_graph(checkpointer: Any | None = None, hitl_enabled: bool = False) -> 
         "hitl_approval",
         _route_after_hitl,
         {
-            "sql_generate": "sql_generate",
+            "sql_agent": "sql_agent",
             "final_response": "final_response",
         },
     )
 
-    builder.add_edge("sql_generate", "sql_validate")
+    builder.add_edge("sql_agent", "sql_validate")
 
     builder.add_conditional_edges(
         "sql_validate",
         _route_after_sql_validate,
         {
             "sql_execute": "sql_execute",
-            "sql_generate": "sql_generate",
+            "sql_agent": "sql_agent",
             "final_response": "final_response",
         },
     )
@@ -140,13 +145,13 @@ def build_graph(checkpointer: Any | None = None, hitl_enabled: bool = False) -> 
         "sql_execute",
         _route_after_sql_execute,
         {
-            "analysis_sandbox": "analysis_sandbox",
-            "sql_generate": "sql_generate",
+            "analysis_agent": "analysis_agent",
+            "sql_agent": "sql_agent",
             "final_response": "final_response",
         },
     )
 
-    builder.add_edge("analysis_sandbox", "report_assemble")
+    builder.add_edge("analysis_agent", "report_assemble")
     builder.add_edge("report_assemble", "final_response")
 
     builder.add_edge("final_response", END)

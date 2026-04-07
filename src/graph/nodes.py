@@ -1,4 +1,10 @@
-"""Graph nodes for the analytical agent workflow."""
+"""Graph nodes for the analytical agent workflow.
+
+Intent classification, SQL generation, and result analysis live in dedicated
+agent subgraphs under ``graph.agents``. The nodes here are the "glue" steps
+of the parent graph: schema retrieval, planning, HITL, validation, execution,
+report assembly, and final response shaping.
+"""
 
 from __future__ import annotations
 
@@ -9,70 +15,15 @@ import uuid
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.types import interrupt
 
 from settings import get_settings
 from report import OutputFormat, ReportOutputService
+from graph.agents._llm import get_llm as _get_llm
 from graph.state import AnalyticalAgentState
 from integrations.clickhouse.schema_catalog import get_schema_context
-from integrations.plotly.chart_generator import PlotlyChartGenerator
 
 logger = logging.getLogger(__name__)
-
-
-def _get_llm() -> ChatOpenAI:
-    """Create OpenRouter-compatible LLM client."""
-    settings = get_settings()
-    return ChatOpenAI(
-        model=settings.openrouter.model,
-        openai_api_key=settings.openrouter.api_key,
-        openai_api_base=settings.openrouter.base_url,
-        temperature=settings.openrouter.temperature,
-        max_tokens=settings.openrouter.max_tokens,
-        timeout=settings.openrouter.timeout,
-    )
-
-
-def intent_classify(state: AnalyticalAgentState) -> dict[str, Any]:
-    """Classify the user's intent from their message."""
-    llm = _get_llm()
-    messages = state.get("messages", [])
-    if not messages:
-        return {"intent": "off_topic", "error": "No messages provided"}
-
-    last_message = messages[-1].get("content", "") if messages else ""
-
-    response = llm.invoke(
-        [
-            SystemMessage(
-                content=(
-                    "You are an intent classifier. Classify the user's message into exactly one of these categories:\n"
-                    "- new_analysis: User wants a new data analysis, report, or query\n"
-                    "- follow_up: User is asking a follow-up question about a previous analysis\n"
-                    "- clarification: User is asking for clarification about something\n"
-                    "- off_topic: Message is not related to data analysis\n\n"
-                    "Respond with ONLY the category name, nothing else."
-                )
-            ),
-            HumanMessage(content=last_message),
-        ]
-    )
-
-    intent = response.content.strip().lower()
-    valid_intents = {"new_analysis", "follow_up", "clarification", "off_topic"}
-    if intent not in valid_intents:
-        intent = "new_analysis"
-
-    logger.info("Classified intent: %s", intent)
-    return {
-        "intent": intent,
-        "sql_retry_count": 0,
-        "graph_step_count": 0,
-        "sql_validation_errors": [],
-        "error": None,
-        "error_node": None,
-    }
 
 
 def context_retrieve(state: AnalyticalAgentState) -> dict[str, Any]:
@@ -150,62 +101,6 @@ def hitl_approval(state: AnalyticalAgentState) -> dict[str, Any]:
         "plan_approved": False,
         "error": "Plan rejected by user",
     }
-
-
-def sql_generate(state: AnalyticalAgentState) -> dict[str, Any]:
-    """Generate SQL query from the approved plan."""
-    # Global step guard to prevent infinite loops
-    step_count = state.get("graph_step_count", 0) + 1
-    MAX_GRAPH_STEPS = 10
-    if step_count > MAX_GRAPH_STEPS:
-        logger.error("Graph step limit reached (%d). Aborting SQL generation.", step_count)
-        return {
-            "generated_sql": None,
-            "sql_validation_errors": ["Maximum graph step limit reached. Aborting."],
-            "sql_retry_count": MAX_GRAPH_STEPS,  # Force routing to final_response
-            "graph_step_count": step_count,
-        }
-
-    llm = _get_llm()
-    plan_data = state.get("plan", {})
-    schema_context = state.get("schema_context", "")
-    messages = state.get("messages", [])
-    last_message = messages[-1].get("content", "") if messages else ""
-
-    validation_errors = state.get("sql_validation_errors", [])
-    error_context = ""
-    if validation_errors:
-        error_context = (
-            "\n\nPrevious SQL had these validation errors. Fix them:\n"
-            + "\n".join(f"- {error}" for error in validation_errors)
-        )
-
-    response = llm.invoke(
-        [
-            SystemMessage(
-                content=(
-                    "You are a ClickHouse SQL expert. Generate a SQL query to answer the user's question.\n\n"
-                    "RULES:\n"
-                    "- Use only SELECT statements (no INSERT, UPDATE, DELETE, DROP, ALTER, CREATE)\n"
-                    "- Always include a LIMIT clause (max 10000)\n"
-                    "- Use only tables from the schema below\n"
-                    "- Use ClickHouse-specific syntax and functions\n"
-                    "- Respond with ONLY the SQL query, no explanation\n\n"
-                    f"{schema_context}"
-                    f"{error_context}"
-                )
-            ),
-            HumanMessage(content=f"Question: {last_message}\n\nPlan: {json.dumps(plan_data)}"),
-        ]
-    )
-
-    sql = response.content.strip()
-    if sql.startswith("```"):
-        lines = sql.split("\n")
-        sql = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-
-    logger.info("Generated SQL: %s", sql[:200])
-    return {"generated_sql": sql, "sql_validation_errors": [], "graph_step_count": step_count}
 
 
 def sql_validate(state: AnalyticalAgentState) -> dict[str, Any]:
@@ -313,77 +208,6 @@ def sql_execute(state: AnalyticalAgentState) -> dict[str, Any]:
             "error": f"SQL execution failed: {exc}",
             "error_node": "sql_execute",
         }
-
-
-def analysis_sandbox(state: AnalyticalAgentState) -> dict[str, Any]:
-    """Analyze query results and generate insights."""
-    llm = _get_llm()
-    query_result = state.get("query_result", {})
-    plan_data = state.get("plan", {})
-    messages = state.get("messages", [])
-    last_message = messages[-1].get("content", "") if messages else ""
-
-    rows = query_result.get("rows", [])
-    sample_rows = rows[:50]
-
-    response = llm.invoke(
-        [
-            SystemMessage(
-                content=(
-                    "You are a data analyst. Analyze the query results and provide insights.\n\n"
-                    "Respond in JSON format with:\n"
-                    "- summary: A clear, concise summary of findings (2-3 paragraphs)\n"
-                    "- key_metrics: list of {name, value, trend} objects for important metrics\n"
-                    "- insights: list of insight strings\n"
-                    "- recommendations: list of actionable recommendations\n"
-                    "Respond with ONLY valid JSON."
-                )
-            ),
-            HumanMessage(
-                content=(
-                    f"Original question: {last_message}\n\n"
-                    f"Plan: {json.dumps(plan_data)}\n\n"
-                    f"Query returned {query_result.get('row_count', 0)} rows.\n"
-                    f"Columns: {query_result.get('columns', [])}\n"
-                    f"Sample data:\n{json.dumps(sample_rows, indent=2, default=str)}"
-                )
-            ),
-        ]
-    )
-
-    try:
-        analysis = json.loads(response.content)
-    except json.JSONDecodeError:
-        analysis = {
-            "summary": response.content,
-            "key_metrics": [],
-            "insights": [],
-            "recommendations": [],
-        }
-
-    plotly_figures: list[dict[str, Any]] = []
-    if rows:
-        try:
-            import pandas as pd
-
-            df = pd.DataFrame(rows)
-            if not df.empty:
-                generator = PlotlyChartGenerator()
-                chart_title = analysis.get("summary", "Analysis Chart") or "Analysis Chart"
-                plotly_figures.append(generator.generate_chart(df, chart_title))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Plotly chart generation failed: %s", exc)
-
-    return {
-        "analysis_summary": analysis.get("summary", ""),
-        "analysis_artifacts": [
-            {
-                "type": "analysis",
-                "content": analysis,
-            }
-        ],
-        "plotly_figures": plotly_figures,
-    }
 
 
 async def report_assemble(state: AnalyticalAgentState) -> dict[str, Any]:

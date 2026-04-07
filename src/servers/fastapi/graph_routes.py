@@ -39,6 +39,7 @@ class AnalyzeResponse(BaseModel):
     report: dict[str, Any] | None = None
     response: str | None = None
     error: str | None = None
+    clarification: dict[str, Any] | None = None
 
 
 class ApproveRequest(BaseModel):
@@ -46,6 +47,30 @@ class ApproveRequest(BaseModel):
 
     thread_id: str = Field(..., description="Thread ID from the analyze response")
     approved: bool = Field(..., description="Whether to approve the plan")
+
+
+class ClarifyRequest(BaseModel):
+    """Request to resume an intent agent waiting for clarification."""
+
+    thread_id: str = Field(..., description="Thread ID from the analyze response")
+    reply: str = Field(..., description="The user's clarification reply")
+
+
+def _extract_pending_interrupt(state: Any) -> dict[str, Any] | None:
+    """Pull the first interrupt payload from a pending graph state, if any."""
+    interrupts = getattr(state, "interrupts", None) or []
+    for itr in interrupts:
+        value = getattr(itr, "value", None)
+        if isinstance(value, dict):
+            return value
+    # Some LangGraph versions expose interrupts via tasks
+    tasks = getattr(state, "tasks", None) or []
+    for task in tasks:
+        for itr in getattr(task, "interrupts", []) or []:
+            value = getattr(itr, "value", None)
+            if isinstance(value, dict):
+                return value
+    return None
 
 
 # ── Shared helpers ──────────────────────────────────────────────
@@ -57,6 +82,8 @@ def _build_initial_state(conversation_id: str, user_id: str, question: str) -> d
         "user_id": user_id,
         "messages": [{"role": "user", "content": question}],
         "intent": None,
+        "intent_spec": None,
+        "intent_clarification_rounds": 0,
         "plan": None,
         "plan_approved": False,
         "schema_context": "",
@@ -80,14 +107,14 @@ def _build_initial_state(conversation_id: str, user_id: str, question: str) -> d
 
 # Mapping from graph node names to user-friendly status messages
 _NODE_STATUS_MAP: dict[str, str] = {
-    "intent_classify": "🔍 Classifying your question...",
+    "intent_agent": "🔍 Understanding your question...",
     "context_retrieve": "📚 Retrieving schema context...",
     "plan": "📋 Creating analysis plan...",
     "hitl_approval": "✅ Checking approval...",
-    "sql_generate": "⚙️ Generating SQL query...",
+    "sql_agent": "⚙️ Writing SQL query...",
     "sql_validate": "🔎 Validating SQL...",
     "sql_execute": "🚀 Executing query on ClickHouse...",
-    "analysis_sandbox": "📊 Analyzing results...",
+    "analysis_agent": "📊 Analyzing results...",
     "report_assemble": "📝 Assembling report...",
     "final_response": "✨ Preparing response...",
 }
@@ -111,6 +138,18 @@ async def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeResponse:
         state = await graph.aget_state(config)
 
         if state.next:
+            interrupt_payload = _extract_pending_interrupt(state)
+            if interrupt_payload and interrupt_payload.get("type") == "clarification":
+                return AnalyzeResponse(
+                    conversation_id=conversation_id,
+                    thread_id=thread_id,
+                    status="awaiting_clarification",
+                    intent=result.get("intent"),
+                    response=interrupt_payload.get(
+                        "question", "I need a bit more detail to answer this accurately."
+                    ),
+                    clarification=interrupt_payload,
+                )
             return AnalyzeResponse(
                 conversation_id=conversation_id,
                 thread_id=thread_id,
@@ -239,6 +278,65 @@ async def approve(request: ApproveRequest, req: Request) -> AnalyzeResponse:
         raise
     except Exception as exc:  # noqa: BLE001
         logger.error("Approval processing failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Clarification resume endpoint ───────────────────────────────
+
+@router.post("/clarify", response_model=AnalyzeResponse)
+async def clarify(request: ClarifyRequest, req: Request) -> AnalyzeResponse:
+    """Resume an intent agent paused for clarification."""
+    from langgraph.types import Command
+
+    graph = req.app.state.graph
+    config = {"configurable": {"thread_id": request.thread_id}}
+
+    try:
+        state = await graph.aget_state(config)
+        if not state.next:
+            raise HTTPException(
+                status_code=400, detail="No pending clarification for this thread"
+            )
+
+        result = await graph.ainvoke(Command(resume=request.reply), config)
+        new_state = await graph.aget_state(config)
+
+        if new_state.next:
+            interrupt_payload = _extract_pending_interrupt(new_state)
+            if interrupt_payload and interrupt_payload.get("type") == "clarification":
+                return AnalyzeResponse(
+                    conversation_id=result.get("conversation_id", ""),
+                    thread_id=request.thread_id,
+                    status="awaiting_clarification",
+                    intent=result.get("intent"),
+                    response=interrupt_payload.get("question", ""),
+                    clarification=interrupt_payload,
+                )
+            return AnalyzeResponse(
+                conversation_id=result.get("conversation_id", ""),
+                thread_id=request.thread_id,
+                status="awaiting_approval",
+                intent=result.get("intent"),
+                plan=result.get("plan"),
+                response="Analysis plan generated. Please approve or reject.",
+            )
+
+        messages = result.get("messages", [])
+        last_msg = messages[-1].get("content", "") if messages else ""
+        return AnalyzeResponse(
+            conversation_id=result.get("conversation_id", ""),
+            thread_id=request.thread_id,
+            status="completed" if not result.get("error") else "error",
+            intent=result.get("intent"),
+            plan=result.get("plan"),
+            report=result.get("report"),
+            response=last_msg,
+            error=result.get("error"),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Clarification resume failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
