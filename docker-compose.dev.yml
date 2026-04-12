@@ -166,9 +166,9 @@ services:
     environment:
       # Disable Ollama (we don't use it)
       - ENABLE_OLLAMA_API=false
-      # OpenRouter as default for general-purpose LLM chat
-      - OPENAI_API_BASE_URLS=${OPENAI_API_BASE_URL:-https://openrouter.ai/api/v1}
-      - OPENAI_API_KEYS=${OPENAI_API_KEY:-}
+      # OpenRouter + local R2-DB2 analyst (semicolon-separated)
+      - OPENAI_API_BASE_URLS=http://127.0.0.1:8000/v1;${OPENAI_API_BASE_URL:-https://openrouter.ai/api/v1}
+      - OPENAI_API_KEYS=sk-dummy;${OPENAI_API_KEY:-}
       # Enable API keys for programmatic access
       - ENABLE_API_KEYS=true
       # Disable signup after admin is created
