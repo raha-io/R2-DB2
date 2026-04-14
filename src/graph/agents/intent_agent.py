@@ -116,8 +116,15 @@ def extract_spec(state: AnalyticalAgentState) -> dict[str, Any]:
                     '  "entities": [string],               // tables/columns the user named or implied\n'
                     '  "ambiguities": [string]             // REQUIRED missing info that blocks SQL generation\n'
                     "}\n"
-                    "Only list ambiguities for information that is truly required to write a correct query. "
-                    "If everything is clear, return an empty list."
+                    "You MUST list ambiguities when any of the following are missing or unclear:\n"
+                    "- metric: what exactly should be measured (e.g. revenue, count, average)?\n"
+                    "- time_range: what time period? If not specified, this IS an ambiguity.\n"
+                    "- filters: are there important constraints the user hasn't stated?\n"
+                    "- dimensions: how should results be grouped?\n"
+                    "- entities: which specific table/entity is the user referring to?\n\n"
+                    "Vague questions like 'show me data', 'top customers', 'the numbers' MUST have ambiguities.\n"
+                    "A question is only clear when it specifies WHAT metric, over WHAT time range, and HOW to group it.\n"
+                    "If everything is genuinely clear and specific, return an empty list."
                 )
             ),
             HumanMessage(content=f"Conversation:\n{transcript}"),
@@ -141,6 +148,21 @@ def extract_spec(state: AnalyticalAgentState) -> dict[str, Any]:
         }
 
     spec.setdefault("ambiguities", [])
+
+    # Deterministic guard (first round of a new_analysis only): force
+    # ambiguities when key fields are missing. Skip for follow_ups — they
+    # inherit metric/time_range context from the prior turn's analysis.
+    rounds = state.get("intent_clarification_rounds", 0)
+    intent = state.get("intent")
+    if rounds == 0 and intent == "new_analysis":
+        forced: list[str] = []
+        if not spec.get("metric"):
+            forced.append("What metric should be measured (e.g. revenue, order count, average order value)?")
+        if not spec.get("time_range"):
+            forced.append("What time period should this cover (e.g. last 30 days, Q1 2024, all time)?")
+        if forced:
+            spec["ambiguities"] = list(dict.fromkeys(forced + spec.get("ambiguities", [])))
+
     logger.info(
         "Intent spec extracted (metric=%s, ambiguities=%d)",
         spec.get("metric"),

@@ -34,37 +34,29 @@ R2_DB2_MODEL_ID = "r2-db2-analyst"
 _THREAD_BY_CONVERSATION: dict[str, str] = {}
 
 
-def _conversation_key(body: ChatCompletionRequest, prior_messages: list[str]) -> str:
+def _conversation_key(body: ChatCompletionRequest, prior_user_messages: list[str]) -> str:
     """Return a stable key identifying this conversation across turns.
 
     Prefers an explicit ``conversation_id`` from the client. Falls back to a
-    hash of the prior assistant/user transcript so OpenWebUI (which always
-    resends the full history) can be matched turn-to-turn even when it does
-    not provide a conversation id.
+    hash of only the prior USER messages so OpenWebUI (which always resends
+    the full history) can be matched turn-to-turn regardless of what the
+    assistant content looks like (streaming thinking indicators, etc.).
     """
     if body.conversation_id:
         return body.conversation_id
-    if not prior_messages:
-        return str(uuid.uuid4())
-    digest = hashlib.sha1("\n".join(prior_messages).encode("utf-8")).hexdigest()
-    return f"hash-{digest[:16]}"
+    digest = hashlib.sha1("\n".join(prior_user_messages).encode("utf-8")).hexdigest()
+    return f"uhash-{digest[:16]}"
 
 
 def _split_user_messages(body: ChatCompletionRequest) -> tuple[str, list[str]]:
-    """Return (last_user_message, prior_message_transcript)."""
+    """Return (last_user_message, prior_user_messages)."""
     user_messages: list[str] = []
-    prior_lines: list[str] = []
     for msg in body.messages:
         if msg.role == "user" and msg.content:
             user_messages.append(msg.content)
-        if msg.content:
-            prior_lines.append(f"{msg.role}: {msg.content}")
     last_user = user_messages[-1] if user_messages else ""
-    # Drop the trailing user line from the prior transcript so the hash is
-    # stable across the request that introduced it and the next request.
-    if prior_lines and last_user:
-        prior_lines = prior_lines[:-1]
-    return last_user, prior_lines
+    prior_user_messages = user_messages[:-1] if user_messages else []
+    return last_user, prior_user_messages
 
 
 def _extract_pending_interrupt(state: Any) -> dict[str, Any] | None:
@@ -141,7 +133,7 @@ def register_openai_routes(app: FastAPI, graph) -> None:
         if body.stream:
             return StreamingResponse(
                 _stream_graph_response(
-                    graph, last_user, body.model, conversation_key
+                    graph, last_user, body.model, conversation_key, prior_messages
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -151,7 +143,7 @@ def register_openai_routes(app: FastAPI, graph) -> None:
                 },
             )
         return await _non_stream_graph_response(
-            graph, last_user, body.model, conversation_key
+            graph, last_user, body.model, conversation_key, prior_messages
         )
 
     app.include_router(router)
@@ -197,17 +189,38 @@ async def _final_message_from_state(graph, config: dict[str, Any]) -> str:
     return messages[-1].get("content", "") if messages else ""
 
 
+def _register_next_turn_key(
+    thread_id: str,
+    prior_user_messages: list[str],
+    last_user: str,
+) -> None:
+    """Pre-register the thread under the hash key turn N+1 will compute.
+
+    OpenWebUI always resends the full transcript. The ``_conversation_key``
+    hash is derived from only the prior user messages. On turn N+1 the
+    prior user messages will be ``prior_user_messages + [last_user]``, so
+    we can predict that hash now and register the current thread under it.
+    """
+    next_prior = list(prior_user_messages) + [last_user]
+    digest = hashlib.sha1("\n".join(next_prior).encode("utf-8")).hexdigest()
+    next_key = f"uhash-{digest[:16]}"
+    _THREAD_BY_CONVERSATION[next_key] = thread_id
+
+
 async def _non_stream_graph_response(
     graph,
     user_message: str,
     model: str,
     conversation_key: str,
+    prior_messages: list[str],
 ) -> ChatCompletionResponse:
     """Run the graph to completion and return a single ChatCompletionResponse."""
     try:
         config, payload = await _resolve_invocation(graph, user_message, conversation_key)
         await graph.ainvoke(payload, config)
         last_msg = await _final_message_from_state(graph, config) or "No response generated."
+        thread_id = config["configurable"]["thread_id"]
+        _register_next_turn_key(thread_id, prior_messages, user_message)
     except Exception as exc:
         logger.exception("Error during graph processing")
         last_msg = f"Error: {exc}"
@@ -245,6 +258,7 @@ async def _stream_graph_response(
     user_message: str,
     model: str,
     conversation_key: str,
+    prior_messages: list[str],
 ) -> AsyncGenerator[str, None]:
     """Stream OpenAI-format SSE chunks using the LangGraph with thinking indicators."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
@@ -280,6 +294,8 @@ async def _stream_graph_response(
                     yield f"data: {thinking_chunk.model_dump_json()}\n\n"
 
         last_msg = await _final_message_from_state(graph, config)
+        thread_id = config["configurable"]["thread_id"]
+        _register_next_turn_key(thread_id, prior_messages, user_message)
 
         if last_msg:
             content_chunk = ChatCompletionChunk(

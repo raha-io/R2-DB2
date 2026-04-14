@@ -176,6 +176,9 @@ services:
       - DEFAULT_USER_ROLE=user
       # Webui name
       - WEBUI_NAME=R2-DB2 Analytics
+      # Default admin credentials (auto-created on first startup when no users exist)
+      - WEBUI_ADMIN_EMAIL=${OPENWEBUI_ADMIN_EMAIL:-admin@admin.com}
+      - WEBUI_ADMIN_PASSWORD=${OPENWEBUI_ADMIN_PASSWORD:-admin}
     depends_on:
       app:
         condition: service_healthy
