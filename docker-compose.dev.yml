@@ -51,7 +51,7 @@ services:
 
   # ── ClickHouse ──
   clickhouse:
-    image: clickhouse/clickhouse-server:26.2
+    image: clickhouse/clickhouse-server:26.3
     environment:
       CLICKHOUSE_DB: analytics
       CLICKHOUSE_USER: default
@@ -105,7 +105,7 @@ services:
 
   # ── PostgreSQL (LangGraph checkpointer) ──
   postgres:
-    image: postgres:18.1
+    image: postgres:18.3
     environment:
       POSTGRES_DB: r2_db2_checkpoints
       POSTGRES_USER: r2-db2
@@ -123,7 +123,7 @@ services:
 
   # ── Redis (caching) ──
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     volumes:
       - redis-data:/data
     healthcheck:
@@ -136,7 +136,7 @@ services:
 
   # ── Qdrant (semantic search) ──
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.17.0
     volumes:
       - qdrant-data:/qdrant/storage
     healthcheck:
@@ -150,7 +150,7 @@ services:
 
   # ── Open WebUI ──
   openwebui:
-    image: ghcr.io/open-webui/open-webui:v0.8.5
+    image: ghcr.io/open-webui/open-webui:v0.8.12
     ports:
       - "3000:8080"
     volumes:
@@ -179,6 +179,14 @@ services:
       # Default admin credentials (auto-created on first startup when no users exist)
       - WEBUI_ADMIN_EMAIL=${OPENWEBUI_ADMIN_EMAIL:-admin@admin.com}
       - WEBUI_ADMIN_PASSWORD=${OPENWEBUI_ADMIN_PASSWORD:-admin}
+      # Disable background LLM calls that would consume the graph's paused
+      # interrupt state before the user's real clarification reply arrives.
+      - ENABLE_TITLE_GENERATION=False
+      - ENABLE_TAGS_GENERATION=False
+      - ENABLE_FOLLOW_UP_GENERATION=False
+      - ENABLE_AUTOCOMPLETE_GENERATION=False
+      # Ensure env vars take precedence over DB-persisted config
+      - ENABLE_PERSISTENT_CONFIG=False
     depends_on:
       app:
         condition: service_healthy
