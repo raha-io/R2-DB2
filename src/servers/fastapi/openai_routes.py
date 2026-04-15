@@ -160,7 +160,10 @@ async def _resolve_invocation(
     from langgraph.types import Command
 
     existing_thread = _THREAD_BY_CONVERSATION.get(conversation_key)
-    if existing_thread:
+    # Guard against the SHA1("") collision: on the very first turn of a new
+    # OpenWebUI chat, prior_user_messages is empty and every such request
+    # would hash to the same key, incorrectly resuming an old paused thread.
+    if existing_thread and not conversation_key.startswith("uhash-da39a3ee5e6b4b0d"):
         config = {"configurable": {"thread_id": existing_thread}}
         try:
             state = await graph.aget_state(config)
