@@ -3,13 +3,16 @@
 # giving access to /etc/hosts entries (pypi.org, chat-ai.example.com)
 # and the 127.0.0.53 stub resolver.
 #
+# ClickHouse is NOT run locally — the app connects to the ClickHouse cluster via
+# a kubectl port-forward on 127.0.0.1:8123. Start the port-forward before
+# bringing up `app` (see README.md).
+#
 # Usage:
 #   docker compose -f docker-compose.dev.yml up -d
 #   docker compose -f docker-compose.dev.yml up -d --no-deps --no-build openwebui
 #
 # Services bind directly to host ports (no port mapping needed):
 #   app         → :8000
-#   clickhouse  → :8123, :9000
 #   postgres    → :5432
 #   redis       → :6379
 #   qdrant      → :6333, :6334
@@ -37,71 +40,13 @@ services:
       REDIS__HOST: 127.0.0.1
       QDRANT__HOST: 127.0.0.1
     depends_on:
-      clickhouse:
-        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      clickhouse-init:
-        condition: service_completed_successfully
     volumes:
       - ./artifacts:/app/artifacts
     restart: unless-stopped
-
-  # ── ClickHouse ──
-  clickhouse:
-    image: clickhouse/clickhouse-server:26.3
-    environment:
-      CLICKHOUSE_DB: analytics
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ""
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-    volumes:
-      - clickhouse-data:/var/lib/clickhouse
-      - clickhouse-logs:/var/log/clickhouse-server
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "clickhouse-client",
-          "--host",
-          "127.0.0.1",
-          "--query",
-          "SELECT 1",
-        ]
-      interval: 10s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
-    restart: unless-stopped
-    network_mode: host
-
-  # ── ClickHouse Init (one-shot seeder) ──
-  clickhouse-init:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        PUBLIC_IMAGE_REGISTRY: ${PUBLIC_IMAGE_REGISTRY}
-        LOCAL_ARTIFACTORY_ADDRESS: ${LOCAL_ARTIFACTORY_ADDRESS}
-        PIP_REPO_URL: ${PIP_REPO_URL}
-    command:
-      [
-        "python",
-        "-c",
-        "from integrations.clickhouse.seed import seed_clickhouse_sync; from settings import get_settings; seed_clickhouse_sync(get_settings().clickhouse)",
-      ]
-    env_file:
-      - .env
-    environment:
-      # With bridge networking, use service name
-      CLICKHOUSE__HOST: 127.0.0.1
-    depends_on:
-      clickhouse:
-        condition: service_healthy
-    restart: "no"
-    network_mode: host
 
   # ── PostgreSQL (LangGraph checkpointer) ──
   postgres:
@@ -192,8 +137,6 @@ services:
         condition: service_healthy
 
 volumes:
-  clickhouse-data:
-  clickhouse-logs:
   postgres-data:
   redis-data:
   qdrant-data:

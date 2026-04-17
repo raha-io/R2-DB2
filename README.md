@@ -32,7 +32,19 @@ sql_generate → sql_validate ──→ sql_execute → analysis_sandbox → rep
 ## Prerequisites
 
 - Docker & Docker Compose v2
+- `kubectl` with access to the ClickHouse cluster (`clickhouse` namespace)
 - An OpenRouter API key (get one at `https://openrouter.ai/keys`)
+
+## ClickHouse Access (ClickHouse cluster)
+
+The app does **not** run a local ClickHouse — it connects to the ClickHouse cluster through a `kubectl` port-forward on `127.0.0.1:8123`.
+
+```bash
+# Port-forward the HTTP interface used by clickhouse-connect
+kubectl port-forward svc/clickhouse-clickhouse 8123:8123 -n clickhouse --insecure-skip-tls-verify
+```
+
+Keep this running in a separate terminal while the app is up. The read-only credentials and `.env` values are in [`.env.example`](.env.example) under the `CLICKHOUSE__*` block. Schema is introspected from `system.columns` on first request, so no seeding step is required.
 
 ## Quick Start
 
@@ -46,10 +58,12 @@ cp .env.example .env
 # Edit .env and set your OpenRouter API key:
 #   OPENROUTER__API_KEY=sk-or-v1-your-key-here
 
-# 3. Start all services (local development)
+# 3. Start the ClickHouse port-forward (separate terminal, keep running)
+kubectl port-forward svc/clickhouse-clickhouse 8123:8123 -n clickhouse --insecure-skip-tls-verify
+
+# 4. Start supporting services + app
 docker compose -f docker-compose.dev.yml up --build -d
 
-# 4. Wait for services to be healthy (ClickHouse seeding takes ~30s)
 # The app will be available at http://localhost:8000
 # Open WebUI will be available at http://localhost:3000
 
@@ -165,11 +179,12 @@ curl http://localhost:8000/health
 | `OPENROUTER__API_KEY` | *(required)* | Your OpenRouter API key |
 | `OPENROUTER__BASE_URL` | `https://openrouter.ai/api/v1` | OpenRouter API endpoint |
 | `OPENROUTER__DEFAULT_MODEL` | `openai/gpt-4o` | Default LLM model |
-| `CLICKHOUSE__HOST` | `clickhouse` | ClickHouse hostname |
+| `CLICKHOUSE__HOST` | `127.0.0.1` | ClickHouse hostname (port-forward target) |
 | `CLICKHOUSE__PORT` | `8123` | ClickHouse HTTP port |
-| `CLICKHOUSE__DATABASE` | `analytics` | ClickHouse database name |
-| `CLICKHOUSE__USER` | `default` | ClickHouse user |
-| `CLICKHOUSE__PASSWORD` | *(empty)* | ClickHouse password |
+| `CLICKHOUSE__DATABASE` | `mart` | ClickHouse database name |
+| `CLICKHOUSE__USER` | `readonly` | ClickHouse user |
+| `CLICKHOUSE__PASSWORD` | *(see `.env.example`)* | ClickHouse password |
+| `CLICKHOUSE__SEED_ON_STARTUP` | `false` | Must stay `false` against the real cluster |
 | `POSTGRES__HOST` | `postgres` | PostgreSQL hostname |
 | `POSTGRES__PORT` | `5432` | PostgreSQL port |
 | `POSTGRES__USER` | `r2-db2` | PostgreSQL user |
@@ -191,14 +206,12 @@ curl http://localhost:8000/health
 | Service | Image | Port | Purpose |
 |---|---|---|---|
 | `app` | Built from Dockerfile | 8000 | FastAPI application |
-| `clickhouse` | clickhouse/clickhouse-server:26.2 | 8123, 9000 | Analytics database |
-| `clickhouse-init` | Built from Dockerfile | — | One-shot data seeder (exits after completion) |
-| `postgres` | postgres:18.1 | 5432 | LangGraph checkpointer |
-| `redis` | redis:7-alpine | 6379 | Caching layer |
-| `qdrant` | qdrant/qdrant:latest | 6333, 6334 | Vector search |
-| `openwebui` | ghcr.io/open-webui/open-webui:v0.8.5 | 3000→8080 | Optional chat UI |
+| `postgres` | postgres:18.3 | 5432 | LangGraph checkpointer |
+| `redis` | redis:8-alpine | 6379 | Caching layer |
+| `qdrant` | qdrant/qdrant:v1.17.0 | 6333, 6334 | Vector search |
+| `openwebui` | ghcr.io/open-webui/open-webui:v0.8.12 | 3000→8080 | Optional chat UI |
 
-> **Note:** The `clickhouse-init` container is a one-shot seeder that exits with code 0 after successfully seeding ClickHouse with sample data (~500 customers, ~50k orders, ~200k events). This is expected behavior — do not be alarmed by its "Exited (0)" status.
+> **ClickHouse:** Not part of compose. The app reaches the ClickHouse cluster through the `kubectl port-forward` on `127.0.0.1:8123` — start it before `app`.
 
 ## Report Generation & PDF
 
@@ -237,9 +250,6 @@ When enabled, the graph pauses before the approval node. Use `POST /api/v1/appro
 # Rebuild and restart just the app (after code changes)
 docker compose -f docker-compose.dev.yml up --build -d app
 
-# Rebuild and re-run the ClickHouse seeder
-docker compose -f docker-compose.dev.yml up --build -d app clickhouse-init
-
 # Full rebuild of all services
 docker compose -f docker-compose.dev.yml up --build -d
 
@@ -259,20 +269,13 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Install dependencies
 uv sync
 
-# Start dependencies (ClickHouse, Postgres, Redis, Qdrant) via Docker
-docker compose -f docker-compose.dev.yml up clickhouse postgres redis qdrant -d
+# Start the ClickHouse port-forward (separate terminal)
+kubectl port-forward svc/clickhouse-clickhouse 8123:8123 -n clickhouse --insecure-skip-tls-verify
 
-# Update .env for local development
-# Change hostnames from service names to localhost:
-#   CLICKHOUSE__HOST=localhost
-#   POSTGRES__HOST=localhost
-#   REDIS__HOST=localhost
-#   QDRANT__HOST=localhost
+# Start supporting dependencies (Postgres, Redis, Qdrant) via Docker
+docker compose -f docker-compose.dev.yml up postgres redis qdrant -d
 
-# Seed ClickHouse
-uv run python -c "from integrations.clickhouse.seed import seed_clickhouse_sync; seed_clickhouse_sync('localhost', 8123, 'analytics')"
-
-# Run the app
+# Run the app (from src/)
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 

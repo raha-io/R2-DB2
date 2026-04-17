@@ -67,7 +67,7 @@ def plan(state: AnalyticalAgentState) -> dict[str, Any]:
         plan_data = {
             "goal": last_message,
             "steps": [{"description": "Execute analysis query", "sql_needed": True}],
-            "tables_needed": ["analytics.orders"],
+            "tables_needed": [],
             "estimated_complexity": "simple",
         }
 
