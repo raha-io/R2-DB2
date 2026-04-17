@@ -25,6 +25,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
       args:
         PUBLIC_IMAGE_REGISTRY: ${PUBLIC_IMAGE_REGISTRY}
         LOCAL_ARTIFACTORY_ADDRESS: ${LOCAL_ARTIFACTORY_ADDRESS}
@@ -95,7 +96,7 @@ services:
 
   # ── Open WebUI ──
   openwebui:
-    image: ghcr.io/open-webui/open-webui:v0.8.12
+    image: ghcr.io/open-webui/open-webui:v0.8.5
     ports:
       - "3000:8080"
     volumes:

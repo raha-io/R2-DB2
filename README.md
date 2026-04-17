@@ -46,6 +46,8 @@ kubectl port-forward svc/clickhouse-clickhouse 8123:8123 -n clickhouse --insecur
 
 Keep this running in a separate terminal while the app is up. The read-only credentials and `.env` values are in [`.env.example`](.env.example) under the `CLICKHOUSE__*` block. Schema is introspected from `system.columns` on first request, so no seeding step is required.
 
+> **Proxy note (native dev):** if your shell exports `http_proxy` / `https_proxy` / `all_proxy` (common on developer machines), `clickhouse-connect` will tunnel the `127.0.0.1` call through the proxy and fail. Export `NO_PROXY=127.0.0.1,localhost` (and lowercase `no_proxy`) in the shell that runs the app. Docker runs are unaffected — proxies aren't passed in.
+
 ## Quick Start
 
 ```bash
@@ -274,6 +276,10 @@ kubectl port-forward svc/clickhouse-clickhouse 8123:8123 -n clickhouse --insecur
 
 # Start supporting dependencies (Postgres, Redis, Qdrant) via Docker
 docker compose -f docker-compose.dev.yml up postgres redis qdrant -d
+
+# Keep loopback traffic off any HTTP proxy the shell may have
+export NO_PROXY=127.0.0.1,localhost
+export no_proxy=127.0.0.1,localhost
 
 # Run the app (from src/)
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000

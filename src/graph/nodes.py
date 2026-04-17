@@ -19,16 +19,50 @@ from langgraph.types import interrupt
 
 from settings import get_settings
 from report import OutputFormat, ReportOutputService
+from graph.agents._json import parse_json_object
 from graph.agents._llm import get_llm as _get_llm
 from graph.state import AnalyticalAgentState
-from integrations.clickhouse.schema_catalog import get_schema_context
+from integrations.clickhouse.schema_catalog import (
+    extract_keywords,
+    get_schema_context,
+    render_focused_schema,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def context_retrieve(state: AnalyticalAgentState) -> dict[str, Any]:
-    """Retrieve schema context and historical queries for the LLM."""
-    schema_context = get_schema_context()
+    """Retrieve schema context and historical queries for the LLM.
+
+    Uses the intent spec + last user message to rank tables so the SQL agent
+    sees the most relevant ones in full and only a name index for the rest.
+    Falls back to the full-schema dump when no keywords are available.
+    """
+    spec = state.get("intent_spec") or {}
+    messages = state.get("messages", [])
+    user_texts = [
+        msg.get("content", "") or ""
+        for msg in messages
+        if msg.get("role") == "user"
+    ]
+
+    keywords = extract_keywords(
+        *user_texts,
+        spec.get("metric"),
+        spec.get("entities"),
+        spec.get("dimensions"),
+        spec.get("filters"),
+    )
+
+    if keywords:
+        schema_context = render_focused_schema(keywords)
+        logger.info(
+            "Focused schema context built (keywords=%s)",
+            sorted(keywords),
+        )
+    else:
+        schema_context = get_schema_context()
+
     return {
         "schema_context": schema_context,
         "historical_queries": [],
@@ -61,9 +95,12 @@ def plan(state: AnalyticalAgentState) -> dict[str, Any]:
         ]
     )
 
-    try:
-        plan_data = json.loads(response.content)
-    except json.JSONDecodeError:
+    plan_data = parse_json_object(response.content)
+    if plan_data is None:
+        logger.warning(
+            "Plan extraction returned non-JSON (first 200 chars): %r",
+            (response.content or "")[:200],
+        )
         plan_data = {
             "goal": last_message,
             "steps": [{"description": "Execute analysis query", "sql_needed": True}],

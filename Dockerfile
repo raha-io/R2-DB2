@@ -1,6 +1,6 @@
 # Build argument for the public image registry (e.g., ghcr.io, docker.io)
 ARG PUBLIC_IMAGE_REGISTRY=docker.io
-FROM ${PUBLIC_IMAGE_REGISTRY}/python:3.13.9-slim
+FROM ${PUBLIC_IMAGE_REGISTRY}/python:3.13.9-slim-bookworm
 
 # Set environment variables to prevent Python from writing bytecode
 ENV PYTHONDONTWRITEBYTECODE=1 \

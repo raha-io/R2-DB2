@@ -20,6 +20,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from graph.agents._json import parse_json_object
 from graph.agents._llm import get_llm
 from graph.state import AnalyticalAgentState
 
@@ -131,12 +132,12 @@ def extract_spec(state: AnalyticalAgentState) -> dict[str, Any]:
         ]
     )
 
-    try:
-        spec = json.loads(response.content)
-        if not isinstance(spec, dict):
-            raise ValueError("spec is not an object")
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("Intent spec extraction returned non-JSON: %s", exc)
+    spec = parse_json_object(response.content)
+    if spec is None:
+        logger.warning(
+            "Intent spec extraction returned non-JSON (first 200 chars): %r",
+            (response.content or "")[:200],
+        )
         spec = {
             "metric": None,
             "dimensions": [],
@@ -149,19 +150,24 @@ def extract_spec(state: AnalyticalAgentState) -> dict[str, Any]:
 
     spec.setdefault("ambiguities", [])
 
-    # Deterministic guard (first round of a new_analysis only): force
-    # ambiguities when key fields are missing. Skip for follow_ups — they
-    # inherit metric/time_range context from the prior turn's analysis.
+    # Deterministic guard (first round of a new_analysis only): when key
+    # fields are missing, ask the LLM to phrase contextual questions grounded
+    # in the user's actual query instead of using canned strings. Skip for
+    # follow_ups — they inherit metric/time_range context from the prior turn.
     rounds = state.get("intent_clarification_rounds", 0)
     intent = state.get("intent")
     if rounds == 0 and intent == "new_analysis":
-        forced: list[str] = []
-        if not spec.get("metric"):
-            forced.append("What metric should be measured (e.g. revenue, order count, average order value)?")
-        if not spec.get("time_range"):
-            forced.append("What time period should this cover (e.g. last 30 days, Q1 2024, all time)?")
-        if forced:
-            spec["ambiguities"] = list(dict.fromkeys(forced + spec.get("ambiguities", [])))
+        missing_fields = [
+            field
+            for field in ("metric", "time_range")
+            if not spec.get(field)
+        ]
+        if missing_fields:
+            contextual = _phrase_missing_field_questions(llm, transcript, missing_fields)
+            if contextual:
+                spec["ambiguities"] = list(
+                    dict.fromkeys(contextual + spec.get("ambiguities", []))
+                )
 
     logger.info(
         "Intent spec extracted (metric=%s, ambiguities=%d)",
@@ -169,6 +175,54 @@ def extract_spec(state: AnalyticalAgentState) -> dict[str, Any]:
         len(spec.get("ambiguities") or []),
     )
     return {"intent_spec": spec}
+
+
+_FIELD_GUIDANCE = {
+    "metric": "what exactly should be measured (e.g. revenue, order count, average order value)",
+    "time_range": "what time period the analysis should cover (e.g. last 30 days, Q1 2024, all time)",
+}
+
+
+def _phrase_missing_field_questions(
+    llm: Any, transcript: str, missing_fields: list[str]
+) -> list[str]:
+    """Ask the LLM to produce contextual clarification questions for each missing field."""
+    field_hints = "\n".join(
+        f'- {field}: {_FIELD_GUIDANCE[field]}' for field in missing_fields
+    )
+
+    response = llm.invoke(
+        [
+            SystemMessage(
+                content=(
+                    "You write short, specific clarification questions for an analytics assistant. "
+                    "For each listed field, produce ONE question that references the user's actual "
+                    "request so the question feels tailored, not generic. Respond with ONLY valid JSON "
+                    "matching this schema:\n"
+                    "{ \"questions\": [string, ...] }\n"
+                    "Return exactly one question per field, in the same order as the fields given. "
+                    "Do not repeat the field name; just ask the question naturally."
+                )
+            ),
+            HumanMessage(
+                content=(
+                    f"Conversation:\n{transcript}\n\n"
+                    f"Missing fields to clarify:\n{field_hints}"
+                )
+            ),
+        ]
+    )
+
+    payload = parse_json_object(response.content)
+    questions = payload.get("questions") if payload else None
+    if not isinstance(questions, list):
+        logger.warning(
+            "Contextual clarification phrasing failed (first 200 chars): %r",
+            (response.content or "")[:200],
+        )
+        return []
+
+    return [str(q).strip() for q in questions if str(q).strip()]
 
 
 def ask_user(state: AnalyticalAgentState) -> dict[str, Any]:
