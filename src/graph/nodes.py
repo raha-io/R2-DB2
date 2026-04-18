@@ -70,28 +70,37 @@ def context_retrieve(state: AnalyticalAgentState) -> dict[str, Any]:
 
 
 def plan(state: AnalyticalAgentState) -> dict[str, Any]:
-    """Generate an analysis plan based on the user's question and schema context."""
+    """Generate an analysis plan grounded in the intent spec and schema context."""
     llm = _get_llm()
     messages = state.get("messages", [])
     last_message = messages[-1].get("content", "") if messages else ""
     schema_context = state.get("schema_context", "")
+    intent_spec = state.get("intent_spec") or {}
 
     response = llm.invoke(
         [
             SystemMessage(
                 content=(
-                    "You are a data analysis planner. Given a user's question and the available database schema, "
-                    "create a structured analysis plan.\n\n"
+                    "You are a data analysis planner. A prior intent agent has already extracted a "
+                    "structured spec from the conversation (metric, dimensions, filters, time_range, "
+                    "granularity, entities). Use that spec as the ground truth — do not invent new "
+                    "metrics or dimensions it does not mention. Produce a plan that tells the SQL "
+                    "agent which tables to touch and in what order.\n\n"
                     f"{schema_context}\n\n"
                     "Respond in JSON format with these fields:\n"
-                    "- goal: string describing the analysis goal\n"
+                    "- goal: restate the spec's metric + dimensions + time_range in one sentence\n"
                     "- steps: list of analysis steps, each with 'description' and 'sql_needed' (bool)\n"
-                    "- tables_needed: list of table names that will be queried\n"
+                    "- tables_needed: list of table names that will be queried (prefer entities from the spec)\n"
                     "- estimated_complexity: 'simple', 'moderate', or 'complex'\n"
                     "Respond with ONLY valid JSON."
                 )
             ),
-            HumanMessage(content=last_message),
+            HumanMessage(
+                content=(
+                    f"User question: {last_message}\n\n"
+                    f"Intent spec: {json.dumps(intent_spec)}"
+                )
+            ),
         ]
     )
 
