@@ -35,7 +35,7 @@ sql_generate → sql_validate ──→ sql_execute → analysis_sandbox → rep
 - `kubectl` with access to the ClickHouse cluster (`clickhouse` namespace)
 - An OpenRouter API key (get one at `https://openrouter.ai/keys`)
 
-## ClickHouse Access (ClickHouse cluster)
+## ClickHouse Access
 
 The app does **not** run a local ClickHouse — it connects to the ClickHouse cluster through a `kubectl` port-forward on `127.0.0.1:8123`.
 
