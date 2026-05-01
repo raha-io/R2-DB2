@@ -4,15 +4,64 @@ Multi-agent analytical system that turns natural language questions into audited
 
 ## Architecture Overview
 
+### System
+
+```mermaid
+flowchart LR
+    Browser["Browser<br/>Svelte SPA"]
+
+    subgraph App["FastAPI app (uvicorn)"]
+        direction TB
+        Static["GET /<br/>static frontend"]
+        OpenAI["POST /v1/chat/completions<br/>GET /v1/models"]
+        GraphAPI["/api/v1/...<br/>analyze · approve · clarify<br/>threads · reports"]
+        Health["GET /health"]
+    end
+
+    LG["LangGraph<br/>analytical workflow"]
+
+    OR[(OpenRouter<br/>LLMs)]
+    CH[(ClickHouse<br/>analytics)]
+    PG[(PostgreSQL<br/>checkpoints)]
+
+    Browser -->|HTTP| Static
+    Browser -->|stream chat| OpenAI
+    Browser -.->|optional| GraphAPI
+
+    OpenAI --> LG
+    GraphAPI --> LG
+
+    LG -->|LLM calls| OR
+    LG -->|SQL queries| CH
+    LG -->|persist state| PG
 ```
-User Question → POST /api/v1/analyze
-    ↓
-intent_classify → context_retrieve → plan → hitl_approval (auto-approve by default)
-    ↓
-sql_generate → sql_validate ──→ sql_execute → analysis_sandbox → report_assemble → final_response
-    ↑         ↓ (errors)
-    └─────────┘ (retry up to 3×)
+
+The Svelte SPA is built into `/app/frontend/dist` and mounted by FastAPI at `/`. User messages stream through the OpenAI-compatible endpoint, which drives the LangGraph workflow below. Postgres stores LangGraph checkpoints; ClickHouse holds the analytical data the agent queries; OpenRouter brokers LLM calls.
+
+### LangGraph workflow
+
+```mermaid
+flowchart TD
+    Start([START]) --> Intent[intent_agent]
+    Intent -->|new analysis| Context[context_retrieve]
+    Intent -->|non-analysis| Final[final_response]
+    Context --> Plan[plan]
+    Plan --> HITL[hitl_approval]
+    HITL -->|approved| SQLGen[sql_agent]
+    HITL -->|rejected| Final
+    SQLGen --> SQLVal[sql_validate]
+    SQLVal -->|valid| SQLExec[sql_execute]
+    SQLVal -->|invalid · retry| SQLGen
+    SQLVal -->|give up| Final
+    SQLExec -->|ok| Analysis[analysis_agent]
+    SQLExec -->|error · retry| SQLGen
+    SQLExec -->|give up| Final
+    Analysis --> Report[report_assemble]
+    Report --> Final
+    Final --> End([END])
 ```
+
+`hitl_approval` auto-approves unless `GRAPH__HITL_ENABLED=true`. SQL retries are capped (default 3); on exhaustion the graph falls through to `final_response` with an error.
 
 ## Tech Stack
 
