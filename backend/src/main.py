@@ -15,7 +15,25 @@ from settings import get_settings
 from graph.builder import build_graph
 from servers.fastapi.openai_routes import register_openai_routes
 
-FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+def _find_frontend_dist() -> Path | None:
+    """Locate the built frontend assets.
+
+    Two layouts are supported: the container (``/app/src/main.py`` with
+    ``/app/frontend/dist`` as a sibling) and local dev (``backend/src/main.py``
+    with ``frontend/dist`` at the repo root, two levels up).
+    """
+    here = Path(__file__).resolve()
+    for candidate in (
+        here.parent.parent / "frontend" / "dist",
+        here.parent.parent.parent / "frontend" / "dist",
+    ):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+FRONTEND_DIST = _find_frontend_dist()
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +94,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("OpenAI-compatible routes registered (graph streaming enabled)")
 
         # Mount the static frontend last so explicit API routes win the match.
-        if FRONTEND_DIST.is_dir():
+        if FRONTEND_DIST is not None:
             app.mount(
                 "/",
                 StaticFiles(directory=FRONTEND_DIST, html=True),
@@ -85,8 +103,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info("Frontend mounted from %s", FRONTEND_DIST)
         else:
             logger.warning(
-                "Frontend bundle not found at %s — UI will not be served",
-                FRONTEND_DIST,
+                "Frontend bundle not found — UI will not be served. "
+                "Run `pnpm --dir frontend build` to produce frontend/dist.",
             )
 
         logger.info("R2-DB2 analytical agent ready")

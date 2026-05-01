@@ -41,10 +41,10 @@ ENV UV_PYTHON_DOWNLOADS=never
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock /app/
+COPY backend/pyproject.toml backend/uv.lock /app/
 RUN uv sync --frozen --no-dev --python $(which python3)
 
-COPY . /app
+COPY backend/ /app/
 
 # Copy the built frontend assets from the Node stage. The application mounts
 # this directory at "/" via FastAPI StaticFiles.

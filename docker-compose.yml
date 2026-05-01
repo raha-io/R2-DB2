@@ -57,7 +57,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["python", "-c", "from integrations.clickhouse.seed import seed_clickhouse_sync; from config.settings import get_settings; seed_clickhouse_sync(get_settings().clickhouse)"]
+    command: ["python", "-c", "from integrations.clickhouse.seed import seed_clickhouse_sync; from settings import get_settings; seed_clickhouse_sync(get_settings().clickhouse)"]
     env_file:
       - .env
     environment:

@@ -11,7 +11,7 @@ __pycache__
 node_modules
 .kilocode
 docs/
-tests/
+backend/tests/
 *.md
 !AGENTS.md
 artifacts/
