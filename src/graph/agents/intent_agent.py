@@ -21,7 +21,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from graph.agents._json import parse_json_object
-from graph.agents._llm import get_llm
+from graph.agents._llm import get_llm, message_text
 from graph.state import AnalyticalAgentState
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ def classify(state: AnalyticalAgentState) -> dict[str, Any]:
         ]
     )
 
-    intent = response.content.strip().lower()
+    intent = message_text(response).strip().lower()
     if intent not in _VALID_INTENTS:
         intent = "new_analysis"
 
@@ -132,11 +132,12 @@ def extract_spec(state: AnalyticalAgentState) -> dict[str, Any]:
         ]
     )
 
-    spec = parse_json_object(response.content)
+    text = message_text(response)
+    spec = parse_json_object(text)
     if spec is None:
         logger.warning(
             "Intent spec extraction returned non-JSON (first 200 chars): %r",
-            (response.content or "")[:200],
+            text[:200],
         )
         spec = {
             "metric": None,
@@ -165,9 +166,8 @@ def extract_spec(state: AnalyticalAgentState) -> dict[str, Any]:
                 llm, transcript, missing_fields
             )
             if contextual:
-                spec["ambiguities"] = list(
-                    dict.fromkeys(contextual + spec.get("ambiguities", []))
-                )
+                existing = spec.get("ambiguities") or []
+                spec["ambiguities"] = list(dict.fromkeys([*contextual, *existing]))
 
     logger.info(
         "Intent spec extracted (metric=%s, ambiguities=%d)",
@@ -273,7 +273,7 @@ def _route_after_spec(state: AnalyticalAgentState) -> str:
 
 def build_intent_agent() -> Any:
     """Compile the intent expert subgraph."""
-    builder = StateGraph(AnalyticalAgentState)
+    builder = StateGraph(AnalyticalAgentState)  # ty: ignore[invalid-argument-type]
 
     builder.add_node("classify", classify)
     builder.add_node("extract_spec", extract_spec)

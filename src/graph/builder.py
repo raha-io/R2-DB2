@@ -18,7 +18,7 @@ MAX_SQL_RETRIES = 3
 MAX_GRAPH_STEPS = 10
 
 
-def _compile_graph(builder: StateGraph, checkpointer: Any, hitl_enabled: bool) -> Any:
+def _compile_graph(builder: Any, checkpointer: Any, hitl_enabled: bool) -> Any:
     if hitl_enabled:
         return builder.compile(
             checkpointer=checkpointer,
@@ -93,7 +93,7 @@ def build_graph(checkpointer: Any | None = None, hitl_enabled: bool = False) -> 
     Returns:
         Compiled LangGraph graph.
     """
-    builder = StateGraph(AnalyticalAgentState)
+    builder = StateGraph(AnalyticalAgentState)  # ty: ignore[invalid-argument-type]
 
     intent_agent = build_intent_agent()
     sql_agent = build_sql_agent()

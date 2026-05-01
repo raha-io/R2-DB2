@@ -14,7 +14,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
-from graph.agents._llm import get_llm
+from graph.agents._llm import get_llm, message_text
 from graph.state import AnalyticalAgentState
 from integrations.plotly.chart_generator import PlotlyChartGenerator
 
@@ -57,11 +57,12 @@ def summarize(state: AnalyticalAgentState) -> dict[str, Any]:
         ]
     )
 
+    text = message_text(response)
     try:
-        analysis = json.loads(response.content)
+        analysis = json.loads(text)
     except json.JSONDecodeError:
         analysis = {
-            "summary": response.content,
+            "summary": text,
             "key_metrics": [],
             "insights": [],
             "recommendations": [],
@@ -104,7 +105,7 @@ def chart(state: AnalyticalAgentState) -> dict[str, Any]:
 
 def build_analysis_agent() -> Any:
     """Compile the analysis subgraph."""
-    builder = StateGraph(AnalyticalAgentState)
+    builder = StateGraph(AnalyticalAgentState)  # ty: ignore[invalid-argument-type]
 
     builder.add_node("summarize", summarize)
     builder.add_node("chart", chart)

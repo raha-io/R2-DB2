@@ -21,6 +21,7 @@ from settings import get_settings
 from report import OutputFormat, ReportOutputService
 from graph.agents._json import parse_json_object
 from graph.agents._llm import get_llm as _get_llm
+from graph.agents._llm import message_text
 from graph.state import AnalyticalAgentState
 from integrations.clickhouse.schema_catalog import (
     extract_keywords,
@@ -102,11 +103,12 @@ def plan(state: AnalyticalAgentState) -> dict[str, Any]:
         ]
     )
 
-    plan_data = parse_json_object(response.content)
+    text = message_text(response)
+    plan_data = parse_json_object(text)
     if plan_data is None:
         logger.warning(
             "Plan extraction returned non-JSON (first 200 chars): %r",
-            (response.content or "")[:200],
+            text[:200],
         )
         plan_data = {
             "goal": last_message,
@@ -266,12 +268,12 @@ async def report_assemble(state: AnalyticalAgentState) -> dict[str, Any]:
         "plan": state.get("plan"),
         "sql": state.get("generated_sql"),
         "execution_time_ms": state.get("execution_time_ms"),
-        "row_count": state.get("query_result", {}).get("row_count", 0),
+        "row_count": (state.get("query_result") or {}).get("row_count", 0),
         "analysis_summary": state.get("analysis_summary"),
         "artifacts": state.get("analysis_artifacts", []),
         "query_result_preview": {
-            "columns": state.get("query_result", {}).get("columns", []),
-            "rows": state.get("query_result", {}).get("rows", [])[:20],
+            "columns": (state.get("query_result") or {}).get("columns", []),
+            "rows": (state.get("query_result") or {}).get("rows", [])[:20],
         },
     }
 
@@ -328,8 +330,7 @@ def final_response(state: AnalyticalAgentState) -> dict[str, Any]:
         response_content = (
             "Could you please provide more details about what you'd like to analyze?"
         )
-    elif state.get("report"):
-        report = state["report"]
+    elif report := state.get("report"):
         response_content = (
             "## Analysis Complete\n\n"
             f"{report.get('analysis_summary', 'Analysis completed.')}\n\n"

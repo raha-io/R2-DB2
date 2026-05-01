@@ -1,0 +1,404 @@
+:root {
+  --ink: #0c0a08;
+  --ink-deep: #080705;
+  --surface: #14110d;
+  --surface-2: #1a1611;
+  --rule: #2a2620;
+  --rule-soft: #1c1914;
+
+  --text: #efe2c8;
+  --text-dim: #b59a72;
+  --text-muted: #6e5e44;
+  --text-faint: #463c2c;
+
+  --amber: #f59e0b;
+  --amber-soft: #d97706;
+  --ember: #ea580c;
+  --rust: #b8451e;
+
+  --teal: #5fa3b3;
+  --ok: #84a05c;
+  --err: #c8483a;
+
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas,
+    monospace;
+
+  font-family: var(--font-mono);
+  font-feature-settings: "calt", "zero", "ss05";
+  font-variant-ligatures: contextual;
+  background: var(--ink);
+  color: var(--text);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  background:
+    radial-gradient(
+      ellipse 80% 50% at 50% -10%,
+      rgba(245, 158, 11, 0.05) 0%,
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 60% 40% at 90% 110%,
+      rgba(95, 163, 179, 0.03) 0%,
+      transparent 60%
+    ),
+    linear-gradient(rgba(245, 230, 200, 0.018) 1px, transparent 1px) 0 0 /
+      100% 28px,
+    linear-gradient(90deg, rgba(245, 230, 200, 0.018) 1px, transparent 1px)
+      0 0 / 28px 100%,
+    var(--ink);
+  position: relative;
+}
+
+/* CRT scanlines — very subtle */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0) 0,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(0, 0, 0, 0.06) 3px
+  );
+  z-index: 999;
+  mix-blend-mode: overlay;
+  opacity: 0.5;
+}
+
+::selection {
+  background: var(--amber);
+  color: var(--ink);
+}
+
+::-moz-selection {
+  background: var(--amber);
+  color: var(--ink);
+}
+
+button,
+input,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--rule);
+  color: var(--text-dim);
+  padding: 5px 12px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 11px;
+  border-radius: 0;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--amber);
+  color: var(--amber);
+  background: rgba(245, 158, 11, 0.04);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+textarea {
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  color: var(--text);
+}
+
+textarea::placeholder {
+  color: var(--text-muted);
+  font-style: normal;
+}
+
+@keyframes blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.cursor-blink {
+  animation: blink 1.05s step-end infinite;
+}
+
+/* ────── markdown rendering inside .md ────── */
+
+.md *:first-child {
+  margin-top: 0;
+}
+.md *:last-child {
+  margin-bottom: 0;
+}
+.md p {
+  margin: 0 0 10px;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: 18px 0 8px;
+  font-weight: 600;
+  color: var(--amber);
+  letter-spacing: 0.02em;
+}
+.md h1 {
+  font-size: 18px;
+}
+.md h2 {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed var(--rule);
+}
+.md h3 {
+  font-size: 13px;
+  color: var(--text);
+}
+.md strong {
+  color: var(--amber);
+  font-weight: 600;
+}
+.md em {
+  color: var(--text-dim);
+  font-style: normal;
+  text-decoration: underline dotted;
+  text-decoration-color: var(--rule);
+  text-underline-offset: 3px;
+}
+.md code {
+  background: var(--surface-2);
+  border: 1px solid var(--rule-soft);
+  padding: 0 5px;
+  font-size: 12.5px;
+  color: var(--text);
+  border-radius: 0;
+}
+
+/* code blocks — styled like a query editor pane */
+.md pre {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  margin: 14px 0;
+  padding: 28px 16px 14px 18px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.65;
+  position: relative;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule) transparent;
+}
+.md pre::before {
+  content: "CODE";
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: var(--surface-2);
+  border-left: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  padding: 3px 10px;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.md pre:has(.language-sql)::before {
+  content: "SQL";
+  color: var(--amber);
+}
+.md pre:has(.language-python)::before {
+  content: "PY";
+  color: var(--teal);
+}
+.md pre:has(.language-bash)::before,
+.md pre:has(.language-shell)::before {
+  content: "SH";
+  color: var(--ok);
+}
+.md pre:has(.language-json)::before {
+  content: "JSON";
+  color: var(--text-dim);
+}
+.md pre::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(
+    to bottom,
+    var(--amber),
+    var(--ember) 40%,
+    transparent 90%
+  );
+  opacity: 0.6;
+}
+.md pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+/* tables — styled like terminal output */
+.md table {
+  border-collapse: collapse;
+  margin: 14px 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  width: max-content;
+  max-width: 100%;
+}
+.md thead {
+  background: var(--surface);
+}
+.md th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--amber);
+  border-bottom: 1px solid var(--rule);
+  padding: 7px 18px 6px 10px;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+.md td {
+  padding: 5px 18px 5px 10px;
+  border-bottom: 1px dashed var(--rule-soft);
+  color: var(--text);
+  white-space: nowrap;
+}
+.md tbody tr:hover {
+  background: rgba(245, 158, 11, 0.03);
+}
+.md tbody tr:last-child td {
+  border-bottom: 1px solid var(--rule);
+}
+
+.md ul,
+.md ol {
+  margin: 8px 0 12px 4px;
+  padding-left: 22px;
+}
+.md ul {
+  list-style: none;
+}
+.md ul li {
+  position: relative;
+}
+.md ul li::before {
+  content: "─";
+  position: absolute;
+  left: -18px;
+  color: var(--amber);
+  opacity: 0.6;
+}
+.md ol {
+  list-style: none;
+  counter-reset: item;
+}
+.md ol li {
+  counter-increment: item;
+  position: relative;
+}
+.md ol li::before {
+  content: counter(item, decimal-leading-zero) ".";
+  position: absolute;
+  left: -28px;
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 600;
+}
+.md li {
+  margin: 3px 0;
+}
+.md blockquote {
+  margin: 10px 0;
+  padding: 4px 0 4px 14px;
+  border-left: 2px solid var(--amber);
+  color: var(--text-dim);
+}
+.md hr {
+  border: 0;
+  border-top: 1px dashed var(--rule);
+  margin: 18px 0;
+  position: relative;
+}
+.md hr::after {
+  content: "·";
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--text-faint);
+  background: var(--ink);
+  padding: 0 8px;
+  font-size: 14px;
+}
+.md a {
+  color: var(--amber);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.md a:hover {
+  color: var(--ember);
+}

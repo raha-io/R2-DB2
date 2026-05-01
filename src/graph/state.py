@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Any, Literal
-
-from typing_extensions import TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 
 
 class AnalyticalAgentState(TypedDict, total=False):

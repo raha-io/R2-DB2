@@ -66,3 +66,31 @@ jobs:
         run: |
           # Exit 5 means "no tests collected" — treat as success until a suite exists.
           uv run pytest tests || [ $? -eq 5 ]
+
+  frontend:
+    name: Frontend (biome + svelte-check + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Biome check
+        run: pnpm run lint
+
+      - name: Build (includes svelte-check)
+        run: pnpm run build

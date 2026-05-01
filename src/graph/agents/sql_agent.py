@@ -15,7 +15,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
-from graph.agents._llm import get_llm
+from graph.agents._llm import get_llm, message_text
 from graph.state import AnalyticalAgentState
 
 logger = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ def draft(state: AnalyticalAgentState) -> dict[str, Any]:
         ]
     )
 
-    sql = _strip_code_fence(response.content)
+    sql = _strip_code_fence(message_text(response))
     logger.info("Drafted SQL: %s", sql[:200])
     return {
         "generated_sql": sql,
@@ -138,7 +138,7 @@ def self_review(state: AnalyticalAgentState) -> dict[str, Any]:
     )
 
     try:
-        verdict = json.loads(response.content)
+        verdict = json.loads(message_text(response))
     except json.JSONDecodeError:
         return {
             "sql_review_pass": True,
@@ -168,7 +168,7 @@ def _route_after_review(state: AnalyticalAgentState) -> str:
 
 def build_sql_agent() -> Any:
     """Compile the SQL writing subgraph."""
-    builder = StateGraph(AnalyticalAgentState)
+    builder = StateGraph(AnalyticalAgentState)  # ty: ignore[invalid-argument-type]
 
     builder.add_node("draft", draft)
     builder.add_node("self_review", self_review)

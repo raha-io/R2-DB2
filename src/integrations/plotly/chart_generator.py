@@ -3,22 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, cast
+from typing import TYPE_CHECKING, Any, Dict, List
 
 import json
 import pandas as pd
 
-try:
-    import plotly.express as px
-    import plotly.graph_objects as go
-    import plotly.io as pio
-
-    _PLOTLY_IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # pragma: no cover - handled at runtime
-    px = None  # type: ignore[assignment]
-    go = None  # type: ignore[assignment]
-    pio = None  # type: ignore[assignment]
-    _PLOTLY_IMPORT_ERROR = exc
+import plotly.express as px
+import plotly.graph_objects as go
+import plotly.io as pio
 
 if TYPE_CHECKING:
     from plotly.graph_objects import Figure
@@ -28,12 +20,8 @@ class PlotlyChartGenerator:
     """Generate Plotly charts using heuristics based on DataFrame characteristics."""
 
     def _ensure_plotly(self) -> None:
-        """Ensure Plotly is available before chart operations."""
-        if _PLOTLY_IMPORT_ERROR is not None:
-            raise ImportError(
-                "Plotly is required for chart generation. "
-                "Install it with 'uv add plotly'."
-            ) from _PLOTLY_IMPORT_ERROR
+        """No-op: plotly is a hard dependency and the module-level imports
+        will raise at import time if it isn't available."""
 
     # R2-DB2 brand colors from landing page
     THEME_COLORS = {
@@ -404,18 +392,15 @@ class PlotlyChartGenerator:
             [0.5, self.THEME_COLORS["cream"]],
             [1.0, self.THEME_COLORS["teal"]],
         ]
-        fig = cast(
-            go.Figure,
-            px.imshow(
-                corr_matrix,
-                title=title,
-                labels=dict(color="Correlation"),
-                x=columns,
-                y=columns,
-                color_continuous_scale=r2_db2_colorscale,
-                zmin=-1,
-                zmax=1,
-            ),
+        fig = px.imshow(
+            corr_matrix,
+            title=title,
+            labels=dict(color="Correlation"),
+            x=columns,
+            y=columns,
+            color_continuous_scale=r2_db2_colorscale,
+            zmin=-1,
+            zmax=1,
         )
         self._apply_standard_layout(fig)
         return fig
@@ -454,7 +439,9 @@ class PlotlyChartGenerator:
         # Use first two categorical columns
         if len(categorical_cols) >= 2:
             # Count occurrences
-            grouped = df.groupby(categorical_cols[:2]).size().reset_index(name="count")
+            grouped = (
+                df.groupby(categorical_cols[:2]).size().reset_index(name="count")  # ty: ignore[no-matching-overload]
+            )
             fig = px.bar(
                 grouped,
                 x=categorical_cols[0],

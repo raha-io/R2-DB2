@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import logging
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from settings import get_settings
 from graph.builder import build_graph
 from servers.fastapi.openai_routes import register_openai_routes
+
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 logger = logging.getLogger(__name__)
 
@@ -43,36 +47,52 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     logger.info("Building analytical agent graph...")
 
-    checkpointer = None
-    try:
-        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    async with AsyncExitStack() as stack:
+        try:
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-        checkpointer = AsyncPostgresSaver.from_conn_string(settings.postgres.dsn)
-        await checkpointer.setup()
-        logger.info("Using PostgreSQL checkpointer")
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "PostgreSQL checkpointer unavailable, using MemorySaver: %s", exc
+            checkpointer = await stack.enter_async_context(
+                AsyncPostgresSaver.from_conn_string(settings.postgres.dsn)
+            )
+            await checkpointer.setup()
+            logger.info("Using PostgreSQL checkpointer")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "PostgreSQL checkpointer unavailable, using MemorySaver: %s", exc
+            )
+            from langgraph.checkpoint.memory import MemorySaver
+
+            checkpointer = MemorySaver()
+
+        graph = build_graph(
+            checkpointer=checkpointer,
+            hitl_enabled=settings.graph.hitl_enabled,
         )
-        from langgraph.checkpoint.memory import MemorySaver
+        app.state.graph = graph
+        app.state.settings = settings
 
-        checkpointer = MemorySaver()
+        # Register OpenAI-compatible routes with graph streaming
+        register_openai_routes(app, graph=graph)
+        logger.info("OpenAI-compatible routes registered (graph streaming enabled)")
 
-    graph = build_graph(
-        checkpointer=checkpointer,
-        hitl_enabled=settings.graph.hitl_enabled,
-    )
-    app.state.graph = graph
-    app.state.settings = settings
+        # Mount the static frontend last so explicit API routes win the match.
+        if FRONTEND_DIST.is_dir():
+            app.mount(
+                "/",
+                StaticFiles(directory=FRONTEND_DIST, html=True),
+                name="frontend",
+            )
+            logger.info("Frontend mounted from %s", FRONTEND_DIST)
+        else:
+            logger.warning(
+                "Frontend bundle not found at %s — UI will not be served",
+                FRONTEND_DIST,
+            )
 
-    # Register OpenAI-compatible routes with graph streaming
-    register_openai_routes(app, graph=graph)
-    logger.info("OpenAI-compatible routes registered (graph streaming enabled)")
+        logger.info("R2-DB2 analytical agent ready")
+        yield
 
-    logger.info("R2-DB2 analytical agent ready")
-    yield
-
-    logger.info("Shutting down R2-DB2 analytical agent")
+        logger.info("Shutting down R2-DB2 analytical agent")
 
 
 def create_app() -> FastAPI:
