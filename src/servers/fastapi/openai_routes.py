@@ -1,4 +1,5 @@
 """OpenAI-compatible API routes for Open WebUI integration."""
+
 from __future__ import annotations
 
 import hashlib
@@ -34,7 +35,9 @@ R2_DB2_MODEL_ID = "r2-db2-analyst"
 _THREAD_BY_CONVERSATION: dict[str, str] = {}
 
 
-def _conversation_key(body: ChatCompletionRequest, prior_user_messages: list[str]) -> str:
+def _conversation_key(
+    body: ChatCompletionRequest, prior_user_messages: list[str]
+) -> str:
     """Return a stable key identifying this conversation across turns.
 
     Prefers an explicit ``conversation_id`` from the client. Falls back to a
@@ -77,7 +80,9 @@ def _extract_pending_interrupt(state: Any) -> dict[str, Any] | None:
 
 def _format_clarification(payload: dict[str, Any]) -> str:
     """Render an intent-agent clarification interrupt as an assistant message."""
-    question = payload.get("question") or "I need a bit more detail to answer this accurately."
+    question = (
+        payload.get("question") or "I need a bit more detail to answer this accurately."
+    )
     ambiguities = payload.get("ambiguities") or []
     if not ambiguities:
         return question
@@ -168,7 +173,9 @@ async def _resolve_invocation(
         try:
             state = await graph.aget_state(config)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to load thread %s, starting fresh: %s", existing_thread, exc)
+            logger.warning(
+                "Failed to load thread %s, starting fresh: %s", existing_thread, exc
+            )
             state = None
         if state and state.next and _extract_pending_interrupt(state):
             logger.info("Resuming paused thread %s with user reply", existing_thread)
@@ -219,9 +226,13 @@ async def _non_stream_graph_response(
 ) -> ChatCompletionResponse:
     """Run the graph to completion and return a single ChatCompletionResponse."""
     try:
-        config, payload = await _resolve_invocation(graph, user_message, conversation_key)
+        config, payload = await _resolve_invocation(
+            graph, user_message, conversation_key
+        )
         await graph.ainvoke(payload, config)
-        last_msg = await _final_message_from_state(graph, config) or "No response generated."
+        last_msg = (
+            await _final_message_from_state(graph, config) or "No response generated."
+        )
         thread_id = config["configurable"]["thread_id"]
         _register_next_turn_key(thread_id, prior_messages, user_message)
     except Exception as exc:
@@ -230,9 +241,7 @@ async def _non_stream_graph_response(
 
     return ChatCompletionResponse(
         model=model,
-        choices=[
-            ChatChoice(message=ChatMessageResponse(content=last_msg))
-        ],
+        choices=[ChatChoice(message=ChatMessageResponse(content=last_msg))],
         usage=UsageInfo(
             prompt_tokens=0,
             completion_tokens=len(last_msg.split()),
@@ -279,7 +288,9 @@ async def _stream_graph_response(
     yield f"data: {first_chunk.model_dump_json()}\n\n"
 
     try:
-        config, payload = await _resolve_invocation(graph, user_message, conversation_key)
+        config, payload = await _resolve_invocation(
+            graph, user_message, conversation_key
+        )
 
         async for event in graph.astream(payload, config, stream_mode="updates"):
             for node_name, _node_output in event.items():

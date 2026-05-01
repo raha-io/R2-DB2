@@ -8,7 +8,9 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 5_000
 
 
-def chunked(items: Sequence[dict[str, Any]], size: int) -> Iterable[Sequence[dict[str, Any]]]:
+def chunked(
+    items: Sequence[dict[str, Any]], size: int
+) -> Iterable[Sequence[dict[str, Any]]]:
     for index in range(0, len(items), size):
         yield items[index : index + size]
 
@@ -21,7 +23,9 @@ def insert_in_batches(
         client.insert(table, data, column_names=list(columns))
 
 
-def insert_customers(client: Any, database: str, customers: Sequence[dict[str, Any]]) -> None:
+def insert_customers(
+    client: Any, database: str, customers: Sequence[dict[str, Any]]
+) -> None:
     columns = [
         "customer_id",
         "name",
@@ -70,4 +74,10 @@ def insert_events(client: Any, database: str, events: Sequence[dict[str, Any]]) 
     insert_in_batches(client, f"{database}.events", columns, events)
 
 
-__all__ = ["insert_customers", "insert_orders", "insert_events", "insert_in_batches", "chunked"]
+__all__ = [
+    "insert_customers",
+    "insert_orders",
+    "insert_events",
+    "insert_in_batches",
+    "chunked",
+]

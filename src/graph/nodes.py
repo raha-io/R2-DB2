@@ -41,9 +41,7 @@ def context_retrieve(state: AnalyticalAgentState) -> dict[str, Any]:
     spec = state.get("intent_spec") or {}
     messages = state.get("messages", [])
     user_texts = [
-        msg.get("content", "") or ""
-        for msg in messages
-        if msg.get("role") == "user"
+        msg.get("content", "") or "" for msg in messages if msg.get("role") == "user"
     ]
 
     keywords = extract_keywords(
@@ -327,7 +325,9 @@ def final_response(state: AnalyticalAgentState) -> dict[str, Any]:
             "Please ask me a question about your data and I'll help you analyze it."
         )
     elif intent == "clarification":
-        response_content = "Could you please provide more details about what you'd like to analyze?"
+        response_content = (
+            "Could you please provide more details about what you'd like to analyze?"
+        )
     elif state.get("report"):
         report = state["report"]
         response_content = (

@@ -7,7 +7,7 @@ authors = [
 
 description = "Generate SQL queries from natural language"
 readme = "README.md"
-requires-python = ">=3.13.9"
+requires-python = ">=3.14"
 
 dependencies = [
     "pydantic>=2.12.5",
@@ -86,9 +86,15 @@ filterwarnings = [
     "ignore::DeprecationWarning",
 ]
 
+[tool.ty.src]
+include = ["src"]
+
+[tool.ty.environment]
+python-version = "3.14"
+
 [tool.ruff]
 # Set the target Python version
-target-version = "py313"
+target-version = "py314"
 
 # Set line length to 88 (Black's default)
 line-length = 88
@@ -107,12 +113,6 @@ exclude = [
     "dist",
     "*.egg-info",
 ]
-
-[[tool.uv.index]]
-name = "private"
-url = "https://pypi.org/simple"
-default = true
-
 
 [tool.ruff.lint]
 # Enable specific rule categories
@@ -197,3 +197,9 @@ skip-magic-trailing-comma = false
 
 # Automatically detect line endings
 line-ending = "auto"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.12",
+    "ty>=0.0.33",
+]

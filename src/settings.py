@@ -77,6 +77,7 @@ class GraphSettings(BaseSettings):
 
 class ReportSettings(BaseModel):
     """Configuration for report output."""
+
     output_dir: str = "reports"
     default_formats: list[str] = ["pdf", "plotly_html", "csv", "json"]
     pdf_page_size: str = "A4"

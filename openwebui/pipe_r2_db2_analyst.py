@@ -75,7 +75,9 @@ class Pipe:
 
         logger.info(
             "pipe() called: stream=%s, question_len=%d, conversation_id=%s",
-            stream, len(question), conversation_id,
+            stream,
+            len(question),
+            conversation_id,
         )
 
         await self._emit_status(
@@ -151,12 +153,16 @@ class Pipe:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
-                    await self._emit_status(event_emitter, "❌ Analysis failed", done=True)
+                    await self._emit_status(
+                        event_emitter, "❌ Analysis failed", done=True
+                    )
                     return f"❌ R2-DB2 Graph API error ({resp.status}): {error_text}"
 
                 data = await resp.json(content_type=None)
                 result_text = self._format_graph_result(data)
-                await self._emit_status(event_emitter, "✅ Analysis complete", done=True)
+                await self._emit_status(
+                    event_emitter, "✅ Analysis complete", done=True
+                )
                 return result_text
 
     async def _graph_stream_response(
@@ -171,7 +177,9 @@ class Pipe:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
-                    await self._emit_status(event_emitter, "❌ Analysis failed", done=True)
+                    await self._emit_status(
+                        event_emitter, "❌ Analysis failed", done=True
+                    )
                     yield f"❌ R2-DB2 Graph API error ({resp.status}): {error_text}"
                     return
 
@@ -210,7 +218,9 @@ class Pipe:
                 if final_result is not None:
                     yield self._format_graph_result(final_result)
 
-                await self._emit_status(event_emitter, "✅ Analysis complete", done=True)
+                await self._emit_status(
+                    event_emitter, "✅ Analysis complete", done=True
+                )
 
     async def _openai_non_stream_response(
         self,
@@ -224,15 +234,21 @@ class Pipe:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
-                    await self._emit_status(event_emitter, "❌ Analysis failed", done=True)
+                    await self._emit_status(
+                        event_emitter, "❌ Analysis failed", done=True
+                    )
                     return f"❌ R2-DB2 OpenAI API error ({resp.status}): {error_text}"
 
                 data = await resp.json(content_type=None)
-                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                content = (
+                    data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                )
                 if not content:
                     content = "⚠️ The analytics backend returned an empty response."
 
-                await self._emit_status(event_emitter, "✅ Analysis complete", done=True)
+                await self._emit_status(
+                    event_emitter, "✅ Analysis complete", done=True
+                )
                 return content
 
     async def _openai_stream_response(
@@ -247,7 +263,9 @@ class Pipe:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
-                    await self._emit_status(event_emitter, "❌ Analysis failed", done=True)
+                    await self._emit_status(
+                        event_emitter, "❌ Analysis failed", done=True
+                    )
                     yield f"❌ R2-DB2 OpenAI API error ({resp.status}): {error_text}"
                     return
 
@@ -292,7 +310,9 @@ class Pipe:
 
                 if not content_received:
                     yield "\n\n⚠️ Stream ended without content from backend."
-                await self._emit_status(event_emitter, "✅ Analysis complete", done=True)
+                await self._emit_status(
+                    event_emitter, "✅ Analysis complete", done=True
+                )
 
     def _format_graph_result(self, data: dict[str, Any]) -> str:
         status = data.get("status")
@@ -320,14 +340,18 @@ class Pipe:
                 return f"{response_text}\n\n📥 Report artifacts:\n{report_links}"
             return f"📥 Report artifacts:\n{report_links}"
 
-        return response_text or "⚠️ Analysis completed but no response text was returned."
+        return (
+            response_text or "⚠️ Analysis completed but no response text was returned."
+        )
 
     def _format_report_links(self, report: dict[str, Any]) -> str:
         if not report:
             return ""
 
         report_output = (
-            report.get("report_output") if isinstance(report.get("report_output"), dict) else {}
+            report.get("report_output")
+            if isinstance(report.get("report_output"), dict)
+            else {}
         )
         report_id = (
             report.get("id")
@@ -343,7 +367,9 @@ class Pipe:
                 item for item in report_output["artifacts"] if isinstance(item, dict)
             )
         if isinstance(report.get("artifacts"), list):
-            artifacts.extend(item for item in report["artifacts"] if isinstance(item, dict))
+            artifacts.extend(
+                item for item in report["artifacts"] if isinstance(item, dict)
+            )
 
         if not artifacts:
             return ""

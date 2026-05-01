@@ -96,8 +96,7 @@ def validate_required_seed_constants() -> None:
     if missing:
         logger.error("Seed generator missing constants: %s", ", ".join(missing))
         raise NameError(
-            "Missing required constants in seed_generators.py: "
-            + ", ".join(missing)
+            "Missing required constants in seed_generators.py: " + ", ".join(missing)
         )
 
 
@@ -233,7 +232,9 @@ def generate_orders(count: int) -> list[dict[str, Any]]:
         if status in {"cancelled", "returned"}:
             base_amount *= 0.6
 
-        discount_rate = rng.choices([0.0, 0.05, 0.1, 0.15], weights=[0.55, 0.2, 0.15, 0.1], k=1)[0]
+        discount_rate = rng.choices(
+            [0.0, 0.05, 0.1, 0.15], weights=[0.55, 0.2, 0.15, 0.1], k=1
+        )[0]
         discount_amount = base_amount * discount_rate
         shipping_cost = rng.uniform(0, 25) if channel != "in_store" else 0.0
         total_amount = max(base_amount - discount_amount + shipping_cost, 5.0)

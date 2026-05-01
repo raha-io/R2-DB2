@@ -36,7 +36,9 @@ def draft(state: AnalyticalAgentState) -> dict[str, Any]:
     """Generate a SQL draft from the plan, intent spec, and schema context."""
     step_count = state.get("graph_step_count", 0) + 1
     if step_count > MAX_GRAPH_STEPS:
-        logger.error("Graph step limit reached (%d). Aborting SQL generation.", step_count)
+        logger.error(
+            "Graph step limit reached (%d). Aborting SQL generation.", step_count
+        )
         return {
             "generated_sql": None,
             "sql_validation_errors": ["Maximum graph step limit reached. Aborting."],
@@ -130,10 +132,7 @@ def self_review(state: AnalyticalAgentState) -> dict[str, Any]:
                 )
             ),
             HumanMessage(
-                content=(
-                    f"Intent spec: {json.dumps(intent_spec)}\n\n"
-                    f"SQL draft:\n{sql}"
-                )
+                content=(f"Intent spec: {json.dumps(intent_spec)}\n\nSQL draft:\n{sql}")
             ),
         ]
     )

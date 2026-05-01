@@ -1,4 +1,5 @@
 """Report output service - generates file artifacts from analysis results."""
+
 from __future__ import annotations
 
 import json
@@ -146,8 +147,10 @@ class ReportOutputService:
         metadata: dict[str, Any],
     ) -> ReportArtifact | None:
         """Generate CSV from query results."""
-        if not query_result or not query_result.get("columns") or not query_result.get(
-            "rows"
+        if (
+            not query_result
+            or not query_result.get("columns")
+            or not query_result.get("rows")
         ):
             logger.info("No query result data for CSV export")
             return None
@@ -190,8 +193,10 @@ class ReportOutputService:
         metadata: dict[str, Any],
     ) -> ReportArtifact | None:
         """Generate Parquet from query results."""
-        if not query_result or not query_result.get("columns") or not query_result.get(
-            "rows"
+        if (
+            not query_result
+            or not query_result.get("columns")
+            or not query_result.get("rows")
         ):
             logger.info("No query result data for Parquet export")
             return None
@@ -276,8 +281,7 @@ class ReportOutputService:
 
         if analysis_text:
             html_parts.append(
-                "<h2>Analysis</h2><div class='analysis'>"
-                f"{analysis_text}</div>"
+                f"<h2>Analysis</h2><div class='analysis'>{analysis_text}</div>"
             )
 
         if chart_divs:
@@ -350,7 +354,7 @@ class ReportOutputService:
             return None
 
         try:
-            from weasyprint import HTML as WeasyprintHTML
+            from weasyprint import HTML as WeasyprintHTML  # noqa: N811
         except ImportError:
             logger.warning(
                 "weasyprint not installed, skipping PDF generation. Install with: uv add weasyprint"

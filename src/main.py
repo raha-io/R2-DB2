@@ -51,7 +51,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await checkpointer.setup()
         logger.info("Using PostgreSQL checkpointer")
     except Exception as exc:  # noqa: BLE001
-        logger.warning("PostgreSQL checkpointer unavailable, using MemorySaver: %s", exc)
+        logger.warning(
+            "PostgreSQL checkpointer unavailable, using MemorySaver: %s", exc
+        )
         from langgraph.checkpoint.memory import MemorySaver
 
         checkpointer = MemorySaver()
@@ -62,7 +64,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     app.state.graph = graph
     app.state.settings = settings
-    
+
     # Register OpenAI-compatible routes with graph streaming
     register_openai_routes(app, graph=graph)
     logger.info("OpenAI-compatible routes registered (graph streaming enabled)")

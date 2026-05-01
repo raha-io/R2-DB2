@@ -12,6 +12,7 @@ try:
     import plotly.express as px
     import plotly.graph_objects as go
     import plotly.io as pio
+
     _PLOTLY_IMPORT_ERROR: Exception | None = None
 except Exception as exc:  # pragma: no cover - handled at runtime
     px = None  # type: ignore[assignment]
@@ -185,7 +186,9 @@ class PlotlyChartGenerator:
             )
         elif len(numeric_cols) == 2:
             # Two numeric columns: scatter plot
-            return self._create_scatter_plot(df, numeric_cols[0], numeric_cols[1], title)
+            return self._create_scatter_plot(
+                df, numeric_cols[0], numeric_cols[1], title
+            )
         elif len(numeric_cols) >= 3:
             # Multiple numeric columns: correlation heatmap
             return self._create_correlation_heatmap(df, numeric_cols, title)

@@ -57,7 +57,10 @@ class Tools:
             await __event_emitter__(
                 {
                     "type": "status",
-                    "data": {"description": f"📋 Listing files for report {report_id}...", "done": False},
+                    "data": {
+                        "description": f"📋 Listing files for report {report_id}...",
+                        "done": False,
+                    },
                 }
             )
 
@@ -91,15 +94,22 @@ class Tools:
                         size = art.get("size_bytes", 0)
                         size_str = f"{size / 1024:.1f} KB" if size > 0 else "—"
                         download_url = f"{base}/api/v1/reports/{report_id}/{filename}"
-                        lines.append(f"| [{filename}]({download_url}) | {fmt} | {size_str} |")
+                        lines.append(
+                            f"| [{filename}]({download_url}) | {fmt} | {size_str} |"
+                        )
 
-                    lines.append(f"\n💡 **Tip**: Click a filename to download, or ask me to get a specific file.")
+                    lines.append(
+                        f"\n💡 **Tip**: Click a filename to download, or ask me to get a specific file."
+                    )
 
                     if __event_emitter__:
                         await __event_emitter__(
                             {
                                 "type": "status",
-                                "data": {"description": "✅ Report files listed", "done": True},
+                                "data": {
+                                    "description": "✅ Report files listed",
+                                    "done": True,
+                                },
                             }
                         )
 
@@ -130,7 +140,10 @@ class Tools:
             await __event_emitter__(
                 {
                     "type": "status",
-                    "data": {"description": f"📥 Preparing download for {filename}...", "done": False},
+                    "data": {
+                        "description": f"📥 Preparing download for {filename}...",
+                        "done": False,
+                    },
                 }
             )
 

@@ -67,7 +67,17 @@ class Tools:
 
         # Basic safety check
         sql_upper = sql_query.strip().upper()
-        forbidden = ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE", "TRUNCATE", "GRANT", "REVOKE"]
+        forbidden = [
+            "DROP",
+            "DELETE",
+            "UPDATE",
+            "INSERT",
+            "ALTER",
+            "CREATE",
+            "TRUNCATE",
+            "GRANT",
+            "REVOKE",
+        ]
         for keyword in forbidden:
             if sql_upper.startswith(keyword):
                 return f"❌ **Rejected**: `{keyword}` statements are not allowed. Only SELECT queries are permitted."
@@ -111,7 +121,10 @@ class Tools:
                         await __event_emitter__(
                             {
                                 "type": "status",
-                                "data": {"description": "✅ Query executed", "done": True},
+                                "data": {
+                                    "description": "✅ Query executed",
+                                    "done": True,
+                                },
                             }
                         )
 

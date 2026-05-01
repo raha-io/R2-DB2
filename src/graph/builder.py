@@ -51,7 +51,9 @@ def _route_after_sql_validate(state: AnalyticalAgentState) -> str:
 
     # Global step guard — prevent infinite loops regardless of validation result
     if step_count >= MAX_GRAPH_STEPS:
-        logger.error("Global step limit reached (%d). Routing to final_response.", step_count)
+        logger.error(
+            "Global step limit reached (%d). Routing to final_response.", step_count
+        )
         return "final_response"
 
     if not errors:
@@ -67,7 +69,9 @@ def _route_after_sql_execute(state: AnalyticalAgentState) -> str:
 
     # Global step guard
     if step_count >= MAX_GRAPH_STEPS:
-        logger.error("Global step limit reached (%d). Routing to final_response.", step_count)
+        logger.error(
+            "Global step limit reached (%d). Routing to final_response.", step_count
+        )
         return "final_response"
 
     if state.get("error") and state.get("error_node") == "sql_execute":

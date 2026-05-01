@@ -1,57 +1,79 @@
-# Dev compose for Cisco VPN / systemd-resolved environments.
-# Uses network_mode: host so all containers share the host network stack,
-# giving access to /etc/hosts entries (pypi.org, chat-ai.example.com)
-# and the 127.0.0.53 stub resolver.
-#
-# ClickHouse is NOT run locally — the app connects to the ClickHouse cluster via
-# a kubectl port-forward on 127.0.0.1:8123. Start the port-forward before
-# bringing up `app` (see README.md).
-#
-# Usage:
-#   docker compose -f docker-compose.dev.yml up -d
-#   docker compose -f docker-compose.dev.yml up -d --no-deps --no-build openwebui
-#
-# Services bind directly to host ports (no port mapping needed):
-#   app         → :8000
-#   postgres    → :5432
-#   redis       → :6379
-#   qdrant      → :6333, :6334
-#   openwebui   → :8080  (http://localhost:8080)
-
 services:
   # ── Application ──
   app:
-    network_mode: host
     build:
       context: .
       dockerfile: Dockerfile
-      network: host
-      args:
-        PUBLIC_IMAGE_REGISTRY: ${PUBLIC_IMAGE_REGISTRY}
-        LOCAL_ARTIFACTORY_ADDRESS: ${LOCAL_ARTIFACTORY_ADDRESS}
-        PIP_REPO_URL: ${PIP_REPO_URL}
     ports:
-      - "8000:8000"
+      - "${SERVER__PORT:-8000}:8000"
     env_file:
       - .env
     environment:
-      # With bridge networking, use service names
-      CLICKHOUSE__HOST: 127.0.0.1
-      POSTGRES__HOST: 127.0.0.1
-      REDIS__HOST: 127.0.0.1
-      QDRANT__HOST: 127.0.0.1
+      CLICKHOUSE__HOST: clickhouse
+      POSTGRES__HOST: postgres
+      REDIS__HOST: redis
+      QDRANT__HOST: qdrant
     depends_on:
+      clickhouse:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      clickhouse-init:
+        condition: service_completed_successfully
     volumes:
       - ./artifacts:/app/artifacts
     restart: unless-stopped
+    networks:
+      - r2-db2-net
+
+  # ── ClickHouse ──
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - r2-db2-net
+
+  # ── ClickHouse Init (one-shot seeder) ──
+  clickhouse-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-c", "from integrations.clickhouse.seed import seed_clickhouse_sync; from config.settings import get_settings; seed_clickhouse_sync(get_settings().clickhouse)"]
+    env_file:
+      - .env
+    environment:
+      CLICKHOUSE__HOST: clickhouse
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - r2-db2-net
 
   # ── PostgreSQL (LangGraph checkpointer) ──
   postgres:
     image: postgres:18.3
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_DB: r2_db2_checkpoints
       POSTGRES_USER: r2-db2
@@ -65,11 +87,14 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - r2-db2-net
 
   # ── Redis (caching) ──
   redis:
-    image: redis:8-alpine
+    image: redis:8.6.2-alpine
+    ports:
+      - "6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -78,49 +103,54 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - r2-db2-net
 
   # ── Qdrant (semantic search) ──
   qdrant:
-    image: qdrant/qdrant:v1.17.0
+    image: qdrant/qdrant:v1.17.1
+    ports:
+      - "6333:6333"
+      - "6334:6334"
     volumes:
       - qdrant-data:/qdrant/storage
     healthcheck:
-      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/localhost/6333' || exit 1"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:6333/healthz"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - r2-db2-net
 
   # ── Open WebUI ──
   openwebui:
-    image: ghcr.io/open-webui/open-webui:v0.8.5
+    image: ghcr.io/open-webui/open-webui:v0.9.2
     ports:
       - "3000:8080"
     volumes:
       - open-webui:/app/backend/data
-    network_mode: host
+    networks:
+      - r2-db2-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
-      interval: 30s
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 60s
+      start_period: 30s
     environment:
       # Disable Ollama (we don't use it)
       - ENABLE_OLLAMA_API=false
       # OpenRouter + local R2-DB2 analyst (semicolon-separated)
-      - OPENAI_API_BASE_URLS=http://127.0.0.1:8000/v1;${OPENAI_API_BASE_URL:-https://openrouter.ai/api/v1}
+      - OPENAI_API_BASE_URLS=http://app:8000/v1;${OPENAI_API_BASE_URL:-https://openrouter.ai/api/v1}
       - OPENAI_API_KEYS=sk-dummy;${OPENAI_API_KEY:-}
       # Enable API keys for programmatic access
       - ENABLE_API_KEYS=true
-      # Disable signup after admin is created
+      # Allow signup; new users default to plain user role
       - ENABLE_SIGNUP=true
       - DEFAULT_USER_ROLE=user
-      # Webui name
       - WEBUI_NAME=R2-DB2 Analytics
       # Default admin credentials (auto-created on first startup when no users exist)
       - WEBUI_ADMIN_EMAIL=${OPENWEBUI_ADMIN_EMAIL:-admin@admin.com}
@@ -138,7 +168,13 @@ services:
         condition: service_healthy
 
 volumes:
+  clickhouse-data:
+  clickhouse-logs:
   postgres-data:
   redis-data:
   qdrant-data:
   open-webui:
+
+networks:
+  r2-db2-net:
+    driver: bridge

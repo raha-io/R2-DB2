@@ -158,12 +158,12 @@ def extract_spec(state: AnalyticalAgentState) -> dict[str, Any]:
     intent = state.get("intent")
     if rounds == 0 and intent == "new_analysis":
         missing_fields = [
-            field
-            for field in ("metric", "time_range")
-            if not spec.get(field)
+            field for field in ("metric", "time_range") if not spec.get(field)
         ]
         if missing_fields:
-            contextual = _phrase_missing_field_questions(llm, transcript, missing_fields)
+            contextual = _phrase_missing_field_questions(
+                llm, transcript, missing_fields
+            )
             if contextual:
                 spec["ambiguities"] = list(
                     dict.fromkeys(contextual + spec.get("ambiguities", []))
@@ -188,7 +188,7 @@ def _phrase_missing_field_questions(
 ) -> list[str]:
     """Ask the LLM to produce contextual clarification questions for each missing field."""
     field_hints = "\n".join(
-        f'- {field}: {_FIELD_GUIDANCE[field]}' for field in missing_fields
+        f"- {field}: {_FIELD_GUIDANCE[field]}" for field in missing_fields
     )
 
     response = llm.invoke(
@@ -199,7 +199,7 @@ def _phrase_missing_field_questions(
                     "For each listed field, produce ONE question that references the user's actual "
                     "request so the question feels tailored, not generic. Respond with ONLY valid JSON "
                     "matching this schema:\n"
-                    "{ \"questions\": [string, ...] }\n"
+                    '{ "questions": [string, ...] }\n'
                     "Return exactly one question per field, in the same order as the fields given. "
                     "Do not repeat the field name; just ask the question naturally."
                 )

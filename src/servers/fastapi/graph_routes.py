@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # ── Request / Response models ───────────────────────────────────
 
+
 class AnalyzeRequest(BaseModel):
     """Request to start a new analysis."""
 
@@ -75,7 +76,10 @@ def _extract_pending_interrupt(state: Any) -> dict[str, Any] | None:
 
 # ── Shared helpers ──────────────────────────────────────────────
 
-def _build_initial_state(conversation_id: str, user_id: str, question: str) -> dict[str, Any]:
+
+def _build_initial_state(
+    conversation_id: str, user_id: str, question: str
+) -> dict[str, Any]:
     """Build the initial graph state dict for a new analysis."""
     return {
         "conversation_id": conversation_id,
@@ -122,6 +126,7 @@ _NODE_STATUS_MAP: dict[str, str] = {
 
 # ── Non-streaming analyze endpoint ──────────────────────────────
 
+
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeResponse:
     """Submit a natural language question for analysis."""
@@ -131,7 +136,9 @@ async def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeResponse:
     thread_id = f"{conversation_id}-{uuid.uuid4().hex[:8]}"
     config = {"configurable": {"thread_id": thread_id}}
 
-    initial_state = _build_initial_state(conversation_id, request.user_id, request.question)
+    initial_state = _build_initial_state(
+        conversation_id, request.user_id, request.question
+    )
 
     try:
         result = await graph.ainvoke(initial_state, config)
@@ -146,7 +153,8 @@ async def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeResponse:
                     status="awaiting_clarification",
                     intent=result.get("intent"),
                     response=interrupt_payload.get(
-                        "question", "I need a bit more detail to answer this accurately."
+                        "question",
+                        "I need a bit more detail to answer this accurately.",
                     ),
                     clarification=interrupt_payload,
                 )
@@ -176,6 +184,7 @@ async def analyze(request: AnalyzeRequest, req: Request) -> AnalyzeResponse:
 
 # ── Streaming analyze endpoint ──────────────────────────────────
 
+
 @router.post("/analyze/stream")
 async def analyze_stream(request: AnalyzeRequest, req: Request) -> StreamingResponse:
     """Submit a question and stream thinking/status updates as SSE events.
@@ -189,11 +198,15 @@ async def analyze_stream(request: AnalyzeRequest, req: Request) -> StreamingResp
     thread_id = f"{conversation_id}-{uuid.uuid4().hex[:8]}"
     config = {"configurable": {"thread_id": thread_id}}
 
-    initial_state = _build_initial_state(conversation_id, request.user_id, request.question)
+    initial_state = _build_initial_state(
+        conversation_id, request.user_id, request.question
+    )
 
     async def _event_generator():
         try:
-            async for event in graph.astream(initial_state, config, stream_mode="updates"):
+            async for event in graph.astream(
+                initial_state, config, stream_mode="updates"
+            ):
                 for node_name, _node_output in event.items():
                     status_msg = _NODE_STATUS_MAP.get(
                         node_name, f"Processing {node_name}..."
@@ -243,6 +256,7 @@ async def analyze_stream(request: AnalyzeRequest, req: Request) -> StreamingResp
 
 # ── Plan approval endpoint ──────────────────────────────────────
 
+
 @router.post("/approve", response_model=AnalyzeResponse)
 async def approve(request: ApproveRequest, req: Request) -> AnalyzeResponse:
     """Approve or reject an analysis plan, resuming the graph execution."""
@@ -254,7 +268,9 @@ async def approve(request: ApproveRequest, req: Request) -> AnalyzeResponse:
     try:
         state = await graph.aget_state(config)
         if not state.next:
-            raise HTTPException(status_code=400, detail="No pending approval for this thread")
+            raise HTTPException(
+                status_code=400, detail="No pending approval for this thread"
+            )
 
         result = await graph.ainvoke(
             Command(resume=request.approved),
@@ -282,6 +298,7 @@ async def approve(request: ApproveRequest, req: Request) -> AnalyzeResponse:
 
 
 # ── Clarification resume endpoint ───────────────────────────────
+
 
 @router.post("/clarify", response_model=AnalyzeResponse)
 async def clarify(request: ClarifyRequest, req: Request) -> AnalyzeResponse:
@@ -342,6 +359,7 @@ async def clarify(request: ClarifyRequest, req: Request) -> AnalyzeResponse:
 
 # ── Thread state endpoint ───────────────────────────────────────
 
+
 @router.get("/threads/{thread_id}/state")
 async def get_thread_state(thread_id: str, req: Request) -> dict[str, Any]:
     """Get the current state of a conversation thread."""
@@ -362,6 +380,7 @@ async def get_thread_state(thread_id: str, req: Request) -> dict[str, Any]:
 
 
 # ── Report endpoints ────────────────────────────────────────────
+
 
 @router.get("/reports/{report_id}")
 async def list_report_artifacts(report_id: str) -> dict[str, Any]:
