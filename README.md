@@ -1,6 +1,6 @@
-# R2-DB2 — ClickHouse Analytical Agent
+# R2-DB2 — Analytical Agent
 
-Multi-agent analytical system that turns natural language questions into audited, reproducible reports backed by ClickHouse. Uses LangGraph for deterministic orchestration and OpenRouter for LLM access.
+Multi-agent analytical system that turns natural language questions into audited, reproducible reports backed by a SQL analytics database. Uses LangGraph for deterministic orchestration and OpenRouter for LLM access.
 
 ## Architecture Overview
 
@@ -21,7 +21,7 @@ flowchart LR
     LG["LangGraph<br/>analytical workflow"]
 
     OR[(OpenRouter<br/>LLMs)]
-    CH[(ClickHouse<br/>analytics)]
+    DB[(Analytics DB)]
     PG[(PostgreSQL<br/>checkpoints)]
 
     Browser -->|HTTP| Static
@@ -32,11 +32,11 @@ flowchart LR
     GraphAPI --> LG
 
     LG -->|LLM calls| OR
-    LG -->|SQL queries| CH
+    LG -->|SQL queries| DB
     LG -->|persist state| PG
 ```
 
-The Svelte SPA is built into `/app/frontend/dist` and mounted by FastAPI at `/`. User messages stream through the OpenAI-compatible endpoint, which drives the LangGraph workflow below. Postgres stores LangGraph checkpoints; ClickHouse holds the analytical data the agent queries; OpenRouter brokers LLM calls.
+The Svelte SPA is built into `/app/frontend/dist` and mounted by FastAPI at `/`. User messages stream through the OpenAI-compatible endpoint, which drives the LangGraph workflow below. Postgres stores LangGraph checkpoints; the analytics database holds the data the agent queries; OpenRouter brokers LLM calls.
 
 ### LangGraph workflow
 
@@ -63,40 +63,6 @@ flowchart TD
 
 `hitl_approval` auto-approves unless `GRAPH__HITL_ENABLED=true`. SQL retries are capped (default 3); on exhaustion the graph falls through to `final_response` with an error.
 
-## Tech Stack
-
-| Component | Details |
-|---|---|
-| Language | Python 3.12 |
-| API | FastAPI |
-| Orchestration | LangGraph |
-| LLM | LangChain + OpenRouter |
-| Analytics DB | ClickHouse |
-| Checkpointer | PostgreSQL |
-| Cache | Redis |
-| Vector DB | Qdrant |
-| Infra | Docker Compose |
-| Package Manager | uv |
-
-## Prerequisites
-
-- Docker & Docker Compose v2
-- `kubectl` with access to the ClickHouse cluster (`clickhouse` namespace)
-- An OpenRouter API key (get one at `https://openrouter.ai/keys`)
-
-## ClickHouse Access
-
-The app does **not** run a local ClickHouse — it connects to the ClickHouse cluster through a `kubectl` port-forward on `127.0.0.1:8123`.
-
-```bash
-# Port-forward the HTTP interface used by clickhouse-connect
-kubectl port-forward svc/clickhouse-clickhouse 8123:8123 -n clickhouse --insecure-skip-tls-verify
-```
-
-Keep this running in a separate terminal while the app is up. The read-only credentials and `.env` values are in [`.env.example`](.env.example) under the `CLICKHOUSE__*` block. Schema is introspected from `system.columns` on first request, so no seeding step is required.
-
-> **Proxy note (native dev):** if your shell exports `http_proxy` / `https_proxy` / `all_proxy` (common on developer machines), `clickhouse-connect` will tunnel the `127.0.0.1` call through the proxy and fail. Export `NO_PROXY=127.0.0.1,localhost` (and lowercase `no_proxy`) in the shell that runs the app. Docker runs are unaffected — proxies aren't passed in.
-
 ## Quick Start
 
 ```bash
@@ -109,16 +75,13 @@ cp .env.example .env
 # Edit .env and set your OpenRouter API key:
 #   OPENROUTER__API_KEY=sk-or-v1-your-key-here
 
-# 3. Start the ClickHouse port-forward (separate terminal, keep running)
-kubectl port-forward svc/clickhouse-clickhouse 8123:8123 -n clickhouse --insecure-skip-tls-verify
-
-# 4. Start supporting services + app
+# 3. Start supporting services + app
 docker compose -f docker-compose.dev.yml up --build -d
 
 # The app will be available at http://localhost:8000
 # Open WebUI will be available at http://localhost:3000
 
-# 5. Verify it's running
+# 4. Verify it's running
 curl http://localhost:8000/health
 ```
 
@@ -230,12 +193,6 @@ curl http://localhost:8000/health
 | `OPENROUTER__API_KEY` | *(required)* | Your OpenRouter API key |
 | `OPENROUTER__BASE_URL` | `https://openrouter.ai/api/v1` | OpenRouter API endpoint |
 | `OPENROUTER__DEFAULT_MODEL` | `openai/gpt-4o` | Default LLM model |
-| `CLICKHOUSE__HOST` | `127.0.0.1` | ClickHouse hostname (port-forward target) |
-| `CLICKHOUSE__PORT` | `8123` | ClickHouse HTTP port |
-| `CLICKHOUSE__DATABASE` | `mart` | ClickHouse database name |
-| `CLICKHOUSE__USER` | `readonly` | ClickHouse user |
-| `CLICKHOUSE__PASSWORD` | *(see `.env.example`)* | ClickHouse password |
-| `CLICKHOUSE__SEED_ON_STARTUP` | `false` | Must stay `false` against the real cluster |
 | `POSTGRES__HOST` | `postgres` | PostgreSQL hostname |
 | `POSTGRES__PORT` | `5432` | PostgreSQL port |
 | `POSTGRES__USER` | `r2-db2` | PostgreSQL user |
@@ -252,6 +209,8 @@ curl http://localhost:8000/health
 | `LANGFUSE__SECRET_KEY` | *(empty)* | Langfuse secret key |
 | `LANGFUSE__HOST` | *(empty)* | Langfuse host URL |
 
+See [`.env.example`](.env.example) for analytics database connection settings.
+
 ## Docker Services
 
 | Service | Image | Port | Purpose |
@@ -261,8 +220,6 @@ curl http://localhost:8000/health
 | `redis` | redis:8-alpine | 6379 | Caching layer |
 | `qdrant` | qdrant/qdrant:v1.17.0 | 6333, 6334 | Vector search |
 | `openwebui` | ghcr.io/open-webui/open-webui:v0.8.12 | 3000→8080 | Optional chat UI |
-
-> **ClickHouse:** Not part of compose. The app reaches the ClickHouse cluster through the `kubectl port-forward` on `127.0.0.1:8123` — start it before `app`.
 
 ## Report Generation & PDF
 
@@ -320,15 +277,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Install dependencies
 uv sync
 
-# Start the ClickHouse port-forward (separate terminal)
-kubectl port-forward svc/clickhouse-clickhouse 8123:8123 -n clickhouse --insecure-skip-tls-verify
-
 # Start supporting dependencies (Postgres, Redis, Qdrant) via Docker
 docker compose -f docker-compose.dev.yml up postgres redis qdrant -d
-
-# Keep loopback traffic off any HTTP proxy the shell may have
-export NO_PROXY=127.0.0.1,localhost
-export no_proxy=127.0.0.1,localhost
 
 # Run the app (from src/)
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
@@ -339,9 +289,7 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 src/
 ├── graph/           # LangGraph orchestration (state, nodes, builder)
-├── integrations/
-│   ├── clickhouse/  # ClickHouse connector, seeder, schema catalog
-│   ├── plotly/      # Chart generation
+├── integrations/    # Database connectors, chart generation
 ├── report/          # Report models and output service
 ├── servers/
 │   └── fastapi/     # FastAPI app, routes, graph API routes
@@ -363,4 +311,4 @@ Key paths:
 
 ## License
 
-See [`LICENSE`](LICENSE:1) file for details.
+This project is licensed under the GNU General Public License v3.0 — see the [`LICENSE`](LICENSE:1) file for the full text.
