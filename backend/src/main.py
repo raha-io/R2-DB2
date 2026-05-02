@@ -123,9 +123,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="R2-DB2 Analytical Agent",
-        description=(
-            "Natural language to SQL analytical agent powered by LangGraph"
-        ),
+        description=("Natural language to SQL analytical agent powered by LangGraph"),
         version="0.1.0",
         lifespan=lifespan,
     )

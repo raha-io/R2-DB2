@@ -56,9 +56,7 @@ class PostgresAdapter:
     ) -> QueryResult:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql, parameters or {})
-            columns = (
-                [desc[0] for desc in cur.description] if cur.description else []
-            )
+            columns = [desc[0] for desc in cur.description] if cur.description else []
             rows = [tuple(r) for r in cur.fetchall()] if cur.description else []
         return {
             "columns": columns,
