@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,7 +17,8 @@ class OpenRouterSettings(BaseSettings):
     timeout: int = 60
 
 
-class ClickHouseSettings(BaseSettings):
+class ClickHouseDb(BaseModel):
+    type: Literal["clickhouse"] = "clickhouse"
     host: str = "localhost"
     port: int = 8123
     database: str = "analytics"
@@ -26,7 +28,41 @@ class ClickHouseSettings(BaseSettings):
     seed_on_startup: bool = True
 
 
+class PostgresDb(BaseModel):
+    type: Literal["postgres"] = "postgres"
+    host: str = "localhost"
+    port: int = 5432
+    database: str = "analytics"
+    db_schema: str = Field(default="public", alias="schema")
+    user: str = "postgres"
+    password: str = ""
+    sslmode: str = "prefer"
+
+    model_config = {"populate_by_name": True}
+
+
+class MysqlDb(BaseModel):
+    type: Literal["mysql"] = "mysql"
+    host: str = "localhost"
+    port: int = 3306
+    database: str = "analytics"
+    user: str = "root"
+    password: str = ""
+
+
+DatabaseSettings = Annotated[
+    Union[ClickHouseDb, PostgresDb, MysqlDb],
+    Field(discriminator="type"),
+]
+
+
 class PostgresSettings(BaseSettings):
+    """Connection settings for the LangGraph checkpointer.
+
+    This is **separate** from the analytics target. Configure the analytics
+    database via ``DATABASE__*`` env vars; this block stays at ``POSTGRES__*``.
+    """
+
     host: str = "localhost"
     port: int = 5432
     database: str = "r2_db2_checkpoints"
@@ -100,7 +136,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     openrouter: OpenRouterSettings = Field(default_factory=OpenRouterSettings)
-    clickhouse: ClickHouseSettings = Field(default_factory=ClickHouseSettings)
+    database: DatabaseSettings = Field(default_factory=ClickHouseDb)
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)

@@ -1,6 +1,6 @@
 # R2-DB2 — Analytical Agent
 
-Multi-agent analytical system that turns natural language questions into audited, reproducible reports backed by a SQL analytics database. Uses LangGraph for deterministic orchestration and OpenRouter for LLM access.
+Multi-agent analytical system that turns natural language questions into audited, reproducible reports backed by a SQL analytics database. Supports ClickHouse, PostgreSQL, and MySQL out of the box. Uses LangGraph for deterministic orchestration and OpenRouter for LLM access.
 
 ## Architecture Overview
 
@@ -21,7 +21,7 @@ flowchart LR
     LG["LangGraph<br/>analytical workflow"]
 
     OR[(OpenRouter<br/>LLMs)]
-    DB[(Analytics DB)]
+    DB[(Analytics DB<br/>ClickHouse · Postgres · MySQL)]
     PG[(PostgreSQL<br/>checkpoints)]
 
     Browser -->|HTTP| Static
@@ -210,6 +210,41 @@ curl http://localhost:8000/health
 | `LANGFUSE__HOST` | *(empty)* | Langfuse host URL |
 
 See [`.env.example`](.env.example) for analytics database connection settings.
+
+## Choosing a database
+
+The agent queries one analytics database, picked at startup via `DATABASE__TYPE`. ClickHouse, PostgreSQL, and MySQL are supported out of the box; the matching `DATABASE__*` block is read and the rest are ignored.
+
+```bash
+# ClickHouse (default — what the bundled compose stack ships)
+DATABASE__TYPE=clickhouse
+DATABASE__HOST=localhost
+DATABASE__PORT=8123
+DATABASE__DATABASE=analytics
+DATABASE__USER=default
+DATABASE__PASSWORD=
+
+# PostgreSQL
+DATABASE__TYPE=postgres
+DATABASE__HOST=localhost
+DATABASE__PORT=5432
+DATABASE__DATABASE=analytics
+DATABASE__SCHEMA=public
+DATABASE__USER=postgres
+DATABASE__PASSWORD=
+
+# MySQL
+DATABASE__TYPE=mysql
+DATABASE__HOST=localhost
+DATABASE__PORT=3306
+DATABASE__DATABASE=analytics
+DATABASE__USER=root
+DATABASE__PASSWORD=
+```
+
+Schema is introspected on first request (ClickHouse `system.columns`, Postgres/MySQL `information_schema.columns`). The SQL-draft prompt is dialect-aware and the seeded demo dataset is ClickHouse-only — point Postgres/MySQL at your own data.
+
+> The `POSTGRES__*` block is unrelated; it configures the LangGraph checkpointer, which is always Postgres regardless of the analytics dialect.
 
 ## Docker Services
 

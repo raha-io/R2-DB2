@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from settings import get_settings
+from settings import ClickHouseDb, get_settings
 from graph.builder import build_graph
 from servers.fastapi.openai_routes import register_openai_routes
 
@@ -50,18 +50,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     logger.info("Starting R2-DB2 analytical agent (env=%s)", settings.environment)
 
-    if settings.clickhouse.seed_on_startup:
-        logger.info("Seeding ClickHouse with fake data...")
-        try:
-            from integrations.clickhouse.seed import seed_clickhouse_sync
+    db = settings.database
+    if isinstance(db, ClickHouseDb):
+        if db.seed_on_startup:
+            logger.info("Seeding ClickHouse with fake data...")
+            try:
+                from integrations.clickhouse.seed import seed_clickhouse_sync
 
-            seed_clickhouse_sync(settings.clickhouse)
-            logger.info("ClickHouse seeding complete")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "ClickHouse seeding failed (may not be available yet): %s",
-                exc,
-            )
+                seed_clickhouse_sync(db)
+                logger.info("ClickHouse seeding complete")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "ClickHouse seeding failed (may not be available yet): %s",
+                    exc,
+                )
+    else:
+        logger.info("Skipping seed: dialect=%s has no seeder", db.type)
 
     logger.info("Building analytical agent graph...")
 
@@ -120,7 +124,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="R2-DB2 Analytical Agent",
         description=(
-            "Natural language to SQL analytical agent powered by LangGraph and ClickHouse"
+            "Natural language to SQL analytical agent powered by LangGraph"
         ),
         version="0.1.0",
         lifespan=lifespan,

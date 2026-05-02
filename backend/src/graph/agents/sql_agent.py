@@ -1,4 +1,4 @@
-"""SQL writing agent — drafts a ClickHouse query and self-reviews it once.
+"""SQL writing agent — drafts a query for the active dialect and self-reviews once.
 
 The parent graph still owns ``sql_validate``/``sql_execute`` and the global
 retry loop. This agent only owns the *generation* phase, with one internal
@@ -17,6 +17,7 @@ from langgraph.graph import END, START, StateGraph
 
 from graph.agents._llm import get_llm, message_text
 from graph.state import AnalyticalAgentState
+from integrations.sql import DIALECT_LABELS, DIALECT_NOTES, get_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -62,18 +63,23 @@ def draft(state: AnalyticalAgentState) -> dict[str, Any]:
             + "\n".join(f"- {error}" for error in validation_errors)
         )
 
+    dialect = get_adapter().dialect
+    dialect_label = DIALECT_LABELS.get(dialect, dialect)
+    dialect_notes = DIALECT_NOTES.get(dialect, "")
+
     response = llm.invoke(
         [
             SystemMessage(
                 content=(
-                    "You are a ClickHouse SQL expert. Generate a SQL query to answer the user's question.\n\n"
+                    f"You are a {dialect_label} SQL expert. Generate a SQL query to answer the user's question.\n\n"
                     "RULES:\n"
                     "- Use only SELECT statements (no INSERT, UPDATE, DELETE, DROP, ALTER, CREATE)\n"
                     "- Always include a LIMIT clause (max 10000)\n"
                     "- Use only tables from the schema below\n"
-                    "- Use ClickHouse-specific syntax and functions\n"
+                    f"- Use {dialect_label}-specific syntax and functions\n"
                     "- Honor the intent spec's metric, dimensions, time range, and granularity exactly\n"
                     "- Respond with ONLY the SQL query, no explanation\n\n"
+                    f"DIALECT NOTES:\n{dialect_notes}\n\n"
                     f"{schema_context}"
                     f"{error_context}"
                 )

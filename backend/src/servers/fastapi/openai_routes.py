@@ -250,7 +250,9 @@ async def _non_stream_graph_response(
     )
 
 
-# Mapping from graph node names to user-friendly thinking messages
+# Mapping from graph node names to user-friendly thinking messages.
+# `sql_execute` is resolved via :func:`_thinking_for` so the message reflects
+# the active SQL dialect (ClickHouse / PostgreSQL / MySQL).
 _NODE_THINKING_MAP: dict[str, str] = {
     "intent_agent": "🔍 Understanding your question...\n\n",
     "context_retrieve": "📚 Loading database schema...\n\n",
@@ -258,11 +260,19 @@ _NODE_THINKING_MAP: dict[str, str] = {
     "hitl_approval": "",
     "sql_agent": "⚙️ Writing SQL query...\n\n",
     "sql_validate": "🔎 Validating SQL...\n\n",
-    "sql_execute": "🚀 Running query on ClickHouse...\n\n",
     "analysis_agent": "📊 Analyzing results...\n\n",
     "report_assemble": "📝 Building report...\n\n",
     "final_response": "",
 }
+
+
+def _thinking_for(node_name: str) -> str:
+    if node_name == "sql_execute":
+        from integrations.sql import DIALECT_LABELS, get_adapter
+
+        label = DIALECT_LABELS.get(get_adapter().dialect, "the database")
+        return f"🚀 Running query on {label}...\n\n"
+    return _NODE_THINKING_MAP.get(node_name, "")
 
 
 async def _stream_graph_response(
@@ -294,7 +304,7 @@ async def _stream_graph_response(
 
         async for event in graph.astream(payload, config, stream_mode="updates"):
             for node_name, _node_output in event.items():
-                thinking_msg = _NODE_THINKING_MAP.get(node_name, "")
+                thinking_msg = _thinking_for(node_name)
                 if thinking_msg:
                     thinking_chunk = ChatCompletionChunk(
                         id=completion_id,

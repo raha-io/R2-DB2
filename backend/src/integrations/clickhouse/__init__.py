@@ -1,6 +1,9 @@
-"""ClickHouse integration: schema catalog, seed orchestration, and helpers."""
+"""ClickHouse-specific helpers (seeder for the demo dataset).
 
-from .schema_catalog import get_schema_context
+Schema introspection and the SQL adapter live in
+``integrations.sql`` so they can serve any supported dialect.
+"""
+
 from .seed import seed_clickhouse, seed_clickhouse_sync
 
-__all__ = ["get_schema_context", "seed_clickhouse", "seed_clickhouse_sync"]
+__all__ = ["seed_clickhouse", "seed_clickhouse_sync"]

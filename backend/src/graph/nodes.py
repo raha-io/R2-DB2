@@ -23,7 +23,8 @@ from graph.agents._json import parse_json_object
 from graph.agents._llm import get_llm as _get_llm
 from graph.agents._llm import message_text
 from graph.state import AnalyticalAgentState
-from integrations.clickhouse.schema_catalog import (
+from integrations.sql import get_adapter
+from integrations.sql.schema_catalog import (
     extract_keywords,
     get_schema_context,
     render_focused_schema,
@@ -210,10 +211,7 @@ def sql_validate(state: AnalyticalAgentState) -> dict[str, Any]:
 
 
 def sql_execute(state: AnalyticalAgentState) -> dict[str, Any]:
-    """Execute the validated SQL against ClickHouse."""
-    import clickhouse_connect
-
-    settings = get_settings()
+    """Execute the validated SQL against the configured analytics database."""
     sql = state.get("generated_sql", "")
 
     if not sql:
@@ -221,19 +219,11 @@ def sql_execute(state: AnalyticalAgentState) -> dict[str, Any]:
 
     try:
         start = time.monotonic()
-        client = clickhouse_connect.get_client(
-            host=settings.clickhouse.host,
-            port=settings.clickhouse.port,
-            database=settings.clickhouse.database,
-            username=settings.clickhouse.user,
-            password=settings.clickhouse.password,
-            secure=settings.clickhouse.secure,
-        )
-        result = client.query(sql)
+        result = get_adapter().execute(sql)
         elapsed_ms = int((time.monotonic() - start) * 1000)
 
-        columns = result.column_names
-        rows = [dict(zip(columns, row)) for row in result.result_rows]
+        columns = result["columns"]
+        rows = [dict(zip(columns, row)) for row in result["rows"]]
 
         query_result = {
             "columns": columns,

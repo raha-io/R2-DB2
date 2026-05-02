@@ -1,36 +1,27 @@
-"""Schema catalog for ClickHouse.
+"""Dialect-agnostic schema catalog.
 
-Introspects the configured database via ``system.columns`` and renders a
-Markdown block for use as LLM context during SQL generation. The raw table
-list and the rendered full-schema markdown are both cached at module level;
-call :func:`refresh_schema_context` to invalidate.
+Calls the active :class:`SqlAdapter` to introspect the configured analytics
+database and renders a Markdown block for use as LLM context during SQL
+generation. The raw table list and the rendered full-schema markdown are
+both cached at module level; call :func:`refresh_schema_context` to
+invalidate.
 
 When an ``intent_spec`` is available the caller can request a focused view
 via :func:`render_focused_schema`, which keeps the most-relevant tables in
-full and collapses the rest to a name-only index so the SQL LLM doesn't get
-drowned in 70+ tables it will never use.
+full and collapses the rest to a name-only index so the SQL LLM doesn't
+get drowned in 70+ tables it will never use.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Iterable, TypedDict
+from typing import Any, Iterable
 
-from settings import ClickHouseSettings, get_settings
+from .base import TableInfo
+from .registry import get_adapter
 
 logger = logging.getLogger(__name__)
-
-
-class ColumnInfo(TypedDict):
-    name: str
-    type: str
-
-
-class TableInfo(TypedDict):
-    name: str
-    columns: list[ColumnInfo]
-
 
 _CACHED_TABLES: list[TableInfo] | None = None
 _CACHED_CONTEXT: str | None = None
@@ -107,42 +98,6 @@ _STOPWORDS = {
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]{2,}")
 
 
-def _create_client(settings: ClickHouseSettings) -> Any:
-    import clickhouse_connect
-
-    return clickhouse_connect.get_client(
-        host=settings.host,
-        port=settings.port,
-        username=settings.user,
-        password=settings.password,
-        database=settings.database,
-        secure=settings.secure,
-    )
-
-
-def _introspect(settings: ClickHouseSettings) -> list[TableInfo]:
-    client = _create_client(settings)
-    try:
-        result = client.query(
-            "SELECT table, name, type "
-            "FROM system.columns "
-            "WHERE database = %(db)s "
-            "ORDER BY table, position",
-            parameters={"db": settings.database},
-        )
-    finally:
-        client.close()
-
-    tables: dict[str, list[ColumnInfo]] = {}
-    for table, name, type_ in result.result_rows:
-        tables.setdefault(table, []).append({"name": name, "type": type_})
-
-    return [
-        {"name": f"{settings.database}.{table}", "columns": cols}
-        for table, cols in tables.items()
-    ]
-
-
 def _render_table(table: TableInfo) -> list[str]:
     lines = [f"### {table['name']}\n", "| Column | Type |", "|--------|------|"]
     for col in table["columns"]:
@@ -164,20 +119,20 @@ def get_schema_tables() -> list[TableInfo]:
     if _CACHED_TABLES is not None:
         return _CACHED_TABLES
 
-    settings = get_settings().clickhouse
+    adapter = get_adapter()
     try:
-        _CACHED_TABLES = _introspect(settings)
+        _CACHED_TABLES = adapter.list_tables()
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "ClickHouse schema introspection failed for database=%s: %s",
-            settings.database,
+            "Schema introspection failed for dialect=%s: %s",
+            adapter.dialect,
             exc,
         )
         _CACHED_TABLES = []
     else:
         logger.info(
-            "Loaded schema tables for database=%s (%d tables)",
-            settings.database,
+            "Loaded schema tables for dialect=%s (%d tables)",
+            adapter.dialect,
             len(_CACHED_TABLES),
         )
     return _CACHED_TABLES
@@ -191,11 +146,11 @@ def get_schema_context() -> str:
 
     tables = get_schema_tables()
     if not tables:
-        settings = get_settings().clickhouse
+        adapter = get_adapter()
         return (
             f"## Available Tables\n\n"
-            f"_Schema introspection failed for database `{settings.database}`. "
-            f"Check ClickHouse connectivity._"
+            f"_Schema introspection failed for dialect `{adapter.dialect}`. "
+            f"Check database connectivity._"
         )
 
     _CACHED_CONTEXT = _render_full(tables)

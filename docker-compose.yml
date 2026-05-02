@@ -9,7 +9,7 @@ services:
     env_file:
       - .env
     environment:
-      CLICKHOUSE__HOST: clickhouse
+      DATABASE__HOST: clickhouse
       POSTGRES__HOST: postgres
       REDIS__HOST: redis
       QDRANT__HOST: qdrant
@@ -57,11 +57,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["python", "-c", "from integrations.clickhouse.seed import seed_clickhouse_sync; from settings import get_settings; seed_clickhouse_sync(get_settings().clickhouse)"]
+    command: ["python", "-c", "from integrations.clickhouse.seed import seed_clickhouse_sync; from settings import get_settings; seed_clickhouse_sync(get_settings().database)"]
     env_file:
       - .env
     environment:
-      CLICKHOUSE__HOST: clickhouse
+      DATABASE__TYPE: clickhouse
+      DATABASE__HOST: clickhouse
     depends_on:
       clickhouse:
         condition: service_healthy

@@ -109,7 +109,9 @@ def _build_initial_state(
     }
 
 
-# Mapping from graph node names to user-friendly status messages
+# Mapping from graph node names to user-friendly status messages.
+# `sql_execute` is resolved dynamically via :func:`_status_for` so the message
+# reflects the active SQL dialect (ClickHouse / PostgreSQL / MySQL).
 _NODE_STATUS_MAP: dict[str, str] = {
     "intent_agent": "🔍 Understanding your question...",
     "context_retrieve": "📚 Retrieving schema context...",
@@ -117,11 +119,19 @@ _NODE_STATUS_MAP: dict[str, str] = {
     "hitl_approval": "✅ Checking approval...",
     "sql_agent": "⚙️ Writing SQL query...",
     "sql_validate": "🔎 Validating SQL...",
-    "sql_execute": "🚀 Executing query on ClickHouse...",
     "analysis_agent": "📊 Analyzing results...",
     "report_assemble": "📝 Assembling report...",
     "final_response": "✨ Preparing response...",
 }
+
+
+def _status_for(node_name: str) -> str:
+    if node_name == "sql_execute":
+        from integrations.sql import DIALECT_LABELS, get_adapter
+
+        label = DIALECT_LABELS.get(get_adapter().dialect, "the database")
+        return f"🚀 Executing query on {label}..."
+    return _NODE_STATUS_MAP.get(node_name, f"Processing {node_name}...")
 
 
 # ── Non-streaming analyze endpoint ──────────────────────────────
@@ -208,9 +218,7 @@ async def analyze_stream(request: AnalyzeRequest, req: Request) -> StreamingResp
                 initial_state, config, stream_mode="updates"
             ):
                 for node_name, _node_output in event.items():
-                    status_msg = _NODE_STATUS_MAP.get(
-                        node_name, f"Processing {node_name}..."
-                    )
+                    status_msg = _status_for(node_name)
                     status_event = {
                         "type": "status",
                         "node": node_name,

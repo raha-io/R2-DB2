@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import Any
 
-from settings import ClickHouseSettings
+from settings import ClickHouseDb
 from .seed_generators import (
     generate_customers,
     generate_orders,
@@ -25,7 +25,7 @@ from .seed_insert import (
 logger = logging.getLogger(__name__)
 
 
-def _create_client(settings: ClickHouseSettings) -> Any:
+def _create_client(settings: ClickHouseDb) -> Any:
     try:
         import clickhouse_connect
     except ImportError as exc:
@@ -50,7 +50,7 @@ def _table_has_data(client: Any, table: str) -> bool:
     return count > 0
 
 
-def seed_clickhouse_sync(settings: ClickHouseSettings) -> None:
+def seed_clickhouse_sync(settings: ClickHouseDb) -> None:
     """Seed ClickHouse with fake analytics data."""
     client = _create_client(settings)
     try:
@@ -81,7 +81,7 @@ def seed_clickhouse_sync(settings: ClickHouseSettings) -> None:
         client.close()
 
 
-async def seed_clickhouse(settings: ClickHouseSettings) -> None:
+async def seed_clickhouse(settings: ClickHouseDb) -> None:
     """Async wrapper for seeding ClickHouse with fake analytics data."""
     await asyncio.to_thread(seed_clickhouse_sync, settings)
 
